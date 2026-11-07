@@ -87,7 +87,10 @@ test('category values, editing, net worth, and charts update', async ({
   await page.locator('#inv-lots').fill('10');
   await page.locator('#inv-stock-price').fill('1500');
   await page.getByRole('dialog').getByRole('button', { name: 'Tambah investasi' }).click();
-  await expect(page.getByText('BBCA')).toBeVisible();
+  await expect(page.getByRole('dialog')).toBeHidden({ timeout: 15_000 });
+  await expect(
+    page.getByTestId('investment-card').filter({ hasText: 'BBCA' }),
+  ).toBeVisible({ timeout: 15_000 });
   await expect(
     page.getByTestId('investment-card').filter({ hasText: 'BBCA' }).getByTestId('investment-current-value'),
   ).toBeVisible();
@@ -100,6 +103,9 @@ test('category values, editing, net worth, and charts update', async ({
   await page.locator('#inv-nib').fill('1100000');
   await page.locator('#inv-nab').fill('1100');
   await page.locator('#inv-units').fill('1000');
+  await expect(page.getByTestId('current-value-preview')).toContainText(
+    '1.100.000',
+  );
   await page.getByRole('dialog').getByRole('button', { name: 'Tambah investasi' }).click();
   await expect(page.getByText('RD Pasar Uang')).toBeVisible();
 
@@ -110,6 +116,9 @@ test('category values, editing, net worth, and charts update', async ({
   await page.locator('#inv-gold-buy').fill('1000000');
   await page.locator('#inv-gold-grams').fill('1');
   await page.locator('#inv-gold-current').fill('1500000');
+  await expect(page.getByTestId('current-value-preview')).toContainText(
+    '1.500.000',
+  );
   await page.getByRole('dialog').getByRole('button', { name: 'Tambah investasi' }).click();
   await expect(page.getByText('Emas Antam')).toBeVisible();
   await expect(page.getByText('Harga emas acuan', { exact: true })).toBeVisible();
@@ -146,4 +155,43 @@ test('category values, editing, net worth, and charts update', async ({
   ).toBeVisible();
   // Net worth increases by Rp 500.000 to Rp 15.100.000.
   await expect(page.getByTestId('net-worth')).toContainText('15.100.000');
+});
+
+
+test('idx snapshot fetches a stock price and fills current value', async ({
+  page,
+}) => {
+  await setup(page);
+
+  await openInvestment(page);
+  await page.locator('#inv-category').selectOption('Saham');
+  await page.locator('#inv-name').fill('BBCA');
+  await page.locator('#inv-stock-code').fill('bbca');
+  await page.getByRole('button', { name: 'Ambil harga' }).click();
+  await expect(page.locator('#inv-stock-price')).toHaveValue(/\d+/, {
+    timeout: 15_000,
+  });
+
+  const price = await page.locator('#inv-stock-price').inputValue();
+  expect(Number(price)).toBeGreaterThan(0);
+  await page.locator('#inv-lots').fill('10');
+  const expected = new Intl.NumberFormat('id-ID').format(Number(price) * 1000);
+  await expect(page.getByTestId('current-value-preview')).toContainText(
+    expected,
+  );
+  await page.locator('#inv-principal').fill('1000000');
+  await page.getByRole('dialog').getByRole('button', { name: 'Tambah investasi' }).click();
+
+  await expect(
+    page.getByTestId('investment-card').filter({ hasText: 'BBCA' })
+      .getByTestId('investment-current-value'),
+  ).toContainText(expected);
+
+  await page.getByRole('button', { name: 'Buka pengaturan' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Harga saham (snapshot)' }),
+  ).toBeVisible();
+  await expect(
+    page.getByText('ihsg.midoriresearch.com', { exact: false }),
+  ).toBeVisible();
 });

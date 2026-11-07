@@ -181,6 +181,7 @@ export interface InvestmentFormInput {
   goldGrams?: string;
   goldBuyPricePerGram?: string;
   goldCurrentPricePerGram?: string;
+  stockCode?: string;
 }
 
 export interface NormalizedInvestmentInput {
@@ -196,6 +197,7 @@ export interface NormalizedInvestmentInput {
   nab?: string;
   nib?: string;
   stockCurrentPrice?: string;
+  stockCode?: string;
   goldGrams?: string;
   goldBuyPricePerGram?: string;
   goldCurrentPricePerGram?: string;
@@ -295,6 +297,16 @@ export function normalizeInvestmentInput(
   const stockCurrentPrice = isStock
     ? optionalAmount(input.stockCurrentPrice ?? '', 'stockCurrentPrice')
     : undefined;
+  const stockCode =
+    isStock && (input.stockCode ?? '').trim() !== ''
+      ? cleanText(input.stockCode ?? '', 'stockCode', 6).toUpperCase()
+      : undefined;
+  if (stockCode && !/^[A-Z]{2,6}$/.test(stockCode)) {
+    throw new ValidationError(
+      'Kode saham harus 2–6 huruf, contoh BBCA.',
+      'stockCode',
+    );
+  }
 
   const nib = isFund ? optionalAmount(input.nib ?? '', 'nib') : undefined;
   const units = isFund
@@ -330,6 +342,7 @@ export function normalizeInvestmentInput(
     ...(stockCurrentPrice
       ? { stockCurrentPrice: amountToString(stockCurrentPrice) }
       : {}),
+    ...(stockCode ? { stockCode } : {}),
     ...(nib ? { nib: amountToString(nib) } : {}),
     ...(units ? { units: decimalToString(units, 6) } : {}),
     ...(nab ? { nab: decimalToString(nab, 6) } : {}),
@@ -448,6 +461,21 @@ function readOptionalAmount(
   return amountToString(value);
 }
 
+function readOptionalStockCode(
+  record: Record<string, unknown>,
+): string | undefined {
+  const raw = record.stockCode;
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  if (typeof raw !== 'string') {
+    throw new ValidationError('Kode saham tidak valid.', 'stockCode');
+  }
+  const code = raw.trim().toUpperCase();
+  if (!/^[A-Z]{2,6}$/.test(code)) {
+    throw new ValidationError('Kode saham tidak valid.', 'stockCode');
+  }
+  return code;
+}
+
 function readOptionalDecimal(
   record: Record<string, unknown>,
   key: string,
@@ -562,6 +590,7 @@ export function assertDataset(value: unknown): Dataset {
       'stockCurrentPrice',
       'stockCurrentPrice',
     );
+    const stockCode = readOptionalStockCode(item);
     const goldGrams = readOptionalDecimal(item, 'goldGrams', 'goldGrams', 4);
     const goldBuyPricePerGram = readOptionalAmount(
       item,
@@ -588,6 +617,7 @@ export function assertDataset(value: unknown): Dataset {
       ...(nab ? { nab } : {}),
       ...(nib ? { nib } : {}),
       ...(stockCurrentPrice ? { stockCurrentPrice } : {}),
+      ...(stockCode ? { stockCode } : {}),
       ...(goldGrams ? { goldGrams } : {}),
       ...(goldBuyPricePerGram ? { goldBuyPricePerGram } : {}),
       ...(goldCurrentPricePerGram ? { goldCurrentPricePerGram } : {}),

@@ -235,8 +235,10 @@ describe('repository', () => {
       lots: '10',
       currency: 'IDR',
       stockCurrentPrice: '1000',
+      stockCode: 'BBCA',
     });
     expect(investment.stockCurrentPrice).toBe('1000');
+    expect(investment.stockCode).toBe('BBCA');
     const updated = await repo.updateInvestment(investment.id, {
       name: 'BBCA',
       category: 'Saham',
@@ -247,9 +249,11 @@ describe('repository', () => {
       lots: '20',
       currency: 'IDR',
       stockCurrentPrice: '1500',
+      stockCode: 'BBCA',
     });
     expect(updated.lots).toBe(20);
     expect(updated.stockCurrentPrice).toBe('1500');
+    expect(updated.stockCode).toBe('BBCA');
 
     const changed = await repo.updateInvestment(investment.id, {
       name: 'Deposito',
@@ -262,6 +266,7 @@ describe('repository', () => {
       currency: 'IDR',
     });
     expect(changed.stockCurrentPrice).toBeUndefined();
+    expect(changed.stockCode).toBeUndefined();
     expect(changed.lots).toBe(0);
     expect(changed.tenorMonths).toBe(12);
     expect(changed.annualInterestRate).toBe('6');

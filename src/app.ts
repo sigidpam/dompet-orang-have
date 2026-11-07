@@ -20,7 +20,18 @@ import { Repository } from './db/repository';
 import { vaultStore } from './db/store';
 import { downloadCsv } from './domain/csv';
 import { loadGoldPrice as fetchGoldPrice, type GoldPrice } from './domain/gold';
-import { formatIdr, todayIso, ValidationError } from './domain/money';
+import {
+  loadStockSnapshot as fetchStockSnapshot,
+  lookupStockQuote,
+  type StockSnapshot,
+} from './domain/stockSnapshot';
+import {
+  formatDateTime,
+  formatIdr,
+  formatMoney,
+  todayIso,
+  ValidationError,
+} from './domain/money';
 import { currenciesInUse, fetchRatesFromFrankfurter } from './domain/rates';
 import { computeSummary, type Summary } from './domain/summary';
 import type { Dataset } from './domain/types';
@@ -114,6 +125,11 @@ export interface AppState {
   goldPrice: GoldPrice | null;
   goldPriceError: string;
   goldPriceLoading: boolean;
+  stockLookupLoading: boolean;
+  stockLookupError: string;
+  stockSnapshot: StockSnapshot | null;
+  stockSnapshotLoading: boolean;
+  stockSnapshotError: string;
   changePin: ChangePinForm;
   accountForm: AccountFormInput;
   accountErrors: Record<string, string>;
@@ -158,6 +174,7 @@ function defaultInvestmentForm(): InvestmentFormInput {
     goldGrams: '',
     goldBuyPricePerGram: '',
     goldCurrentPricePerGram: '',
+    stockCode: '',
   };
 }
 
@@ -207,6 +224,11 @@ function createInitialState(): AppState {
     goldPrice: null,
     goldPriceError: '',
     goldPriceLoading: false,
+    stockLookupLoading: false,
+    stockLookupError: '',
+    stockSnapshot: null,
+    stockSnapshotLoading: false,
+    stockSnapshotError: '',
     changePin: defaultChangePin(),
     accountForm: defaultAccountForm(),
     accountErrors: {},
@@ -292,6 +314,7 @@ export class App {
     this.openChannel();
     this.render();
     void this.loadGoldPrice(false);
+    void this.loadStockSnapshot(false);
   }
 
   private attachListeners(): void {
@@ -300,6 +323,7 @@ export class App {
       this.render();
       void this.maybeAutoSyncRates();
       void this.loadGoldPrice(false);
+      void this.loadStockSnapshot(false);
     });
     window.addEventListener('offline', () => {
       this.state.offline = true;
@@ -637,6 +661,11 @@ export class App {
     this.state.editingInvestmentId = null;
     this.state.goldPriceError = '';
     this.state.goldPriceLoading = false;
+    this.state.stockLookupLoading = false;
+    this.state.stockLookupError = '';
+    this.state.stockSnapshot = null;
+    this.state.stockSnapshotLoading = false;
+    this.state.stockSnapshotError = '';
     this.state.changePin = defaultChangePin();
     this.state.accountForm = defaultAccountForm();
     this.state.accountErrors = {};
@@ -851,6 +880,7 @@ export class App {
       this.broadcast('changed');
       void this.maybeAutoSyncRates();
       void this.loadGoldPrice(false);
+      void this.loadStockSnapshot(false);
     } catch (error) {
       if (session) {
         lockSession(session);
@@ -969,6 +999,7 @@ export class App {
       goldGrams: investment.goldGrams ?? '',
       goldBuyPricePerGram: investment.goldBuyPricePerGram ?? '',
       goldCurrentPricePerGram: investment.goldCurrentPricePerGram ?? '',
+      stockCode: investment.stockCode ?? '',
     };
     this.state.investmentErrors = {};
     this.pendingFocus = '[data-autofocus]';
@@ -992,6 +1023,7 @@ export class App {
     this.state.investmentForm.nab = '';
     this.state.investmentForm.nib = '';
     this.state.investmentForm.stockCurrentPrice = '';
+    this.state.investmentForm.stockCode = '';
     this.state.investmentForm.goldGrams = '';
     this.state.investmentForm.goldBuyPricePerGram = '';
     this.state.investmentForm.goldCurrentPricePerGram = '';
@@ -1105,9 +1137,99 @@ export class App {
   setInvestmentField<K extends keyof InvestmentFormInput>(
     field: K,
     value: InvestmentFormInput[K],
+    rerender = false,
   ): void {
     this.state.investmentForm[field] = value;
     delete this.state.investmentErrors[String(field)];
+    if (rerender) this.render();
+  }
+
+  setStockCode(value: string): void {
+    this.state.investmentForm.stockCode = value
+      .replace(/[^a-zA-Z]/g, '')
+      .toUpperCase()
+      .slice(0, 6);
+    this.state.investmentForm.stockCurrentPrice = '';
+    this.state.stockLookupError = '';
+    this.render();
+  }
+
+  async loadStockSnapshot(manual = false): Promise<void> {
+    if (this.state.stockSnapshotLoading) return;
+    this.state.stockSnapshotLoading = true;
+    if (manual) {
+      this.state.stockSnapshotError = '';
+      this.render();
+    }
+    try {
+      const snapshot = await fetchStockSnapshot();
+      if (snapshot) {
+        this.state.stockSnapshot = snapshot;
+        this.state.stockSnapshotError = '';
+        if (manual) {
+          this.notify(
+            `Snapshot saham diperbarui (${formatDateTime(snapshot.asOf)}).`,
+            'success',
+          );
+        }
+      } else {
+        this.state.stockSnapshotError =
+          'Snapshot harga saham belum tersedia. Isi harga manual atau coba lagi saat online.';
+        if (manual) {
+          this.notify('Gagal memuat snapshot harga saham.', 'error');
+        }
+      }
+    } finally {
+      this.state.stockSnapshotLoading = false;
+      this.render();
+    }
+  }
+
+  async refreshStockPrice(): Promise<void> {
+    const form = this.state.investmentForm;
+    if (this.state.stockLookupLoading) return;
+    const code = (form.stockCode ?? '').trim().toUpperCase();
+    if (!/^[A-Z]{2,6}$/.test(code)) {
+      this.state.stockLookupError =
+        'Isi kode saham 2–6 huruf terlebih dahulu (contoh BBCA).';
+      this.render();
+      return;
+    }
+    this.state.stockLookupLoading = true;
+    this.state.stockLookupError = '';
+    this.render();
+    try {
+      const snapshot = await fetchStockSnapshot();
+      if (!snapshot) {
+        this.state.stockLookupError =
+          'Snapshot harga saham belum tersedia. Coba saat online atau isi harga manual.';
+        return;
+      }
+      this.state.stockSnapshot = snapshot;
+      this.state.stockSnapshotError = '';
+      const quote = lookupStockQuote(snapshot, code);
+      if (!quote) {
+        this.state.stockLookupError =
+          `Kode ${code} tidak ada di snapshot. Perbarui snapshot atau isi harga manual.`;
+        return;
+      }
+      if (
+        this.state.modal !== 'investment' ||
+        (this.state.investmentForm.stockCode ?? '').trim().toUpperCase() !== code
+      ) {
+        return;
+      }
+      this.state.investmentForm.stockCode = quote.code;
+      this.state.investmentForm.stockCurrentPrice = quote.price;
+      this.state.investmentForm.currency = 'IDR';
+      this.notify(
+        `Harga ${quote.code}: ${formatMoney(quote.price, 'IDR')} (snapshot ${formatDateTime(snapshot.asOf)}).`,
+        'success',
+      );
+    } finally {
+      this.state.stockLookupLoading = false;
+      this.render();
+    }
   }
 
   setTransactionField<K extends keyof TransactionFormInput>(

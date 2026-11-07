@@ -82,6 +82,8 @@ export interface Investment {
   nab?: string;
   /** Reksa Dana: NIB — net investment value in rupiah. */
   nib?: string;
+  /** Saham: IDX code used for quote lookup (e.g. BBCA). */
+  stockCode?: string;
   /** Saham: current price per share in the investment currency. */
   stockCurrentPrice?: string;
   /** Emas: grams held. */

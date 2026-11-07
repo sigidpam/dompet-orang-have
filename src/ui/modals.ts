@@ -10,7 +10,15 @@ import {
   TENOR_CATEGORIES,
   type InvestmentCategory,
 } from '../domain/types';
-import { formatDateTime, formatIdr, formatRate } from '../domain/money';
+import {
+  Decimal,
+  formatDateTime,
+  formatIdr,
+  formatMoney,
+  formatNumber,
+  formatRate,
+  toDecimal,
+} from '../domain/money';
 import { icon } from './icons';
 import { errorSummary, fieldError, modalShell } from './components';
 
@@ -33,6 +41,7 @@ const INVESTMENT_FIELD_IDS: Record<string, string> = {
   units: 'inv-units',
   nab: 'inv-nab',
   nib: 'inv-nib',
+  stockCode: 'inv-stock-code',
   stockCurrentPrice: 'inv-stock-price',
   goldGrams: 'inv-gold-grams',
   goldBuyPricePerGram: 'inv-gold-buy',
@@ -197,6 +206,63 @@ function accountModal(app: App): TemplateResult {
   });
 }
 
+function currentValuePreview(app: App): TemplateResult | typeof nothing {
+  const form = app.state.investmentForm;
+  const category = form.category as InvestmentCategory;
+  let value: Decimal | null = null;
+  let note: string;
+  if (category === STOCK_CATEGORY) {
+    const lots = toDecimal(form.lots || '0');
+    const price = toDecimal(form.stockCurrentPrice || '0');
+    if (lots.gt(0) && price.gt(0)) {
+      value = lots.times(100).times(price);
+      note = `${formatNumber(lots.toNumber(), 0)} lot × 100 × ${formatMoney(price, form.currency)}`;
+    } else {
+      note = 'Isi lot dan ambil harga saat ini.';
+    }
+  } else if (category === FUND_CATEGORY) {
+    const nib = toDecimal(form.nib || '0');
+    const units = toDecimal(form.units || '0');
+    const nab = toDecimal(form.nab || '0');
+    if (nib.gt(0)) {
+      value = nib;
+      note = 'Dari NIB';
+    } else if (units.gt(0) && nab.gt(0)) {
+      value = units.times(nab);
+      note = `${formatNumber(units, 4)} unit × NAB ${formatNumber(nab, 4)}`;
+    } else {
+      note = 'Isi NIB, atau NAB dan unit.';
+    }
+  } else if (category === GOLD_CATEGORY) {
+    const grams = toDecimal(form.goldGrams || '0');
+    const manual = toDecimal(form.goldCurrentPricePerGram || '0');
+    const market = app.state.goldPrice
+      ? toDecimal(app.state.goldPrice.pricePerGram)
+      : new Decimal(0);
+    if (grams.gt(0) && manual.gt(0)) {
+      value = grams.times(manual);
+      note = `${formatNumber(grams, 2)} g × harga manual ${formatMoney(manual, form.currency)}`;
+    } else if (grams.gt(0) && market.gt(0)) {
+      return html`<div class="border border-accent/30 bg-accent/5 p-3" data-testid="current-value-preview">
+        <p class="font-mono text-[10px] uppercase tracking-wider text-accent">Nilai Saat Ini (otomatis)</p>
+        <p class="mt-1 font-mono text-lg font-bold tabular text-ink">${formatIdr(grams.times(market))}</p>
+        <p class="mt-1 text-[10px] text-faint">${formatNumber(grams, 2)} g × harga acuan ${formatIdr(market)}/g</p>
+      </div>`;
+    } else {
+      note = 'Isi gramasi; harga acuan dipakai bila harga manual kosong.';
+    }
+  } else {
+    return nothing;
+  }
+  return html`<div class="border border-accent/30 bg-accent/5 p-3" data-testid="current-value-preview">
+    <p class="font-mono text-[10px] uppercase tracking-wider text-accent">Nilai Saat Ini (otomatis)</p>
+    <p class="mt-1 font-mono text-lg font-bold tabular text-ink">
+      ${value ? formatMoney(value, form.currency) : '—'}
+    </p>
+    <p class="mt-1 text-[10px] text-faint">${note}</p>
+  </div>`;
+}
+
 function investmentModal(app: App): TemplateResult {
   const form = app.state.investmentForm;
   const errors = app.state.investmentErrors;
@@ -302,50 +368,92 @@ function investmentModal(app: App): TemplateResult {
           </div>`}
 
       ${isStock
-        ? html`<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div>
-              <label class="field-label" for="inv-lots">Jumlah lot</label>
-              <input
-                id="inv-lots"
-                class="field-input font-mono tabular"
-                type="text"
-                inputmode="numeric"
-                placeholder="0"
-                .value=${form.lots}
-                aria-invalid=${errors.lots ? 'true' : 'false'}
-                aria-describedby="inv-lots-hint${errors.lots ? ' inv-lots-error' : ''}"
-                @input=${(event: Event) =>
-                  app.setInvestmentField(
-                    'lots',
-                    (event.target as HTMLInputElement).value,
-                  )}
-              />
-              ${fieldError('inv-lots-error', errors.lots)}
-              <p class="field-hint" id="inv-lots-hint">
-                1 lot = 100 lembar. Nilai saat ini = lot × 100 × harga per lembar.
-              </p>
+        ? html`<div class="space-y-3">
+            <div class="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]">
+              <div>
+                <label class="field-label" for="inv-stock-code">Kode saham</label>
+                <input
+                  id="inv-stock-code"
+                  class="field-input font-mono uppercase"
+                  type="text"
+                  maxlength="6"
+                  autocomplete="off"
+                  autocapitalize="characters"
+                  placeholder="BBCA"
+                  .value=${form.stockCode}
+                  aria-invalid=${errors.stockCode ? 'true' : 'false'}
+                  aria-describedby=${errors.stockCode ? 'inv-stock-code-error' : nothing}
+                  @input=${(event: Event) =>
+                    app.setStockCode((event.target as HTMLInputElement).value)}
+                />
+                ${fieldError('inv-stock-code-error', errors.stockCode)}
+              </div>
+              <div class="flex items-end">
+                <button
+                  type="button"
+                  class="btn w-full sm:w-auto"
+                  ?disabled=${app.state.stockLookupLoading || app.state.modalBusy}
+                  @click=${() => void app.refreshStockPrice()}
+                >
+                  ${icon('refresh', 'size-4')}
+                  ${app.state.stockLookupLoading ? 'Mengambil…' : 'Ambil harga'}
+                </button>
+              </div>
             </div>
-            <div>
-              <label class="field-label" for="inv-stock-price">
-                Harga saat ini / lembar
-              </label>
-              <input
-                id="inv-stock-price"
-                class="field-input font-mono tabular"
-                type="text"
-                inputmode="decimal"
-                placeholder="0"
-                .value=${form.stockCurrentPrice}
-                aria-invalid=${errors.stockCurrentPrice ? 'true' : 'false'}
-                aria-describedby=${errors.stockCurrentPrice ? 'inv-stock-price-error' : nothing}
-                @input=${(event: Event) =>
-                  app.setInvestmentField(
-                    'stockCurrentPrice',
-                    (event.target as HTMLInputElement).value,
-                  )}
-              />
-              ${fieldError('inv-stock-price-error', errors.stockCurrentPrice)}
-              <p class="field-hint">Opsional; kosongkan untuk memakai nilai investasi.</p>
+            ${app.state.stockLookupError
+              ? html`<p class="border border-danger/40 bg-danger/10 p-2.5 text-xs leading-5 text-danger" role="alert">
+                  ${app.state.stockLookupError}
+                </p>`
+              : nothing}
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label class="field-label" for="inv-lots">Jumlah lot</label>
+                <input
+                  id="inv-lots"
+                  class="field-input font-mono tabular"
+                  type="text"
+                  inputmode="numeric"
+                  placeholder="0"
+                  .value=${form.lots}
+                  aria-invalid=${errors.lots ? 'true' : 'false'}
+                  aria-describedby="inv-lots-hint${errors.lots ? ' inv-lots-error' : ''}"
+                  @input=${(event: Event) =>
+                    app.setInvestmentField(
+                      'lots',
+                      (event.target as HTMLInputElement).value,
+                      true,
+                    )}
+                />
+                ${fieldError('inv-lots-error', errors.lots)}
+                <p class="field-hint" id="inv-lots-hint">
+                  1 lot = 100 lembar. Nilai saat ini dihitung otomatis.
+                </p>
+              </div>
+              <div>
+                <label class="field-label" for="inv-stock-price">
+                  Harga saat ini / lembar
+                </label>
+                <input
+                  id="inv-stock-price"
+                  class="field-input font-mono tabular"
+                  type="text"
+                  inputmode="decimal"
+                  placeholder="0"
+                  .value=${form.stockCurrentPrice}
+                  aria-invalid=${errors.stockCurrentPrice ? 'true' : 'false'}
+                  aria-describedby=${errors.stockCurrentPrice ? 'inv-stock-price-error' : nothing}
+                  @input=${(event: Event) =>
+                    app.setInvestmentField(
+                      'stockCurrentPrice',
+                      (event.target as HTMLInputElement).value,
+                      true,
+                    )}
+                />
+                ${fieldError('inv-stock-price-error', errors.stockCurrentPrice)}
+                <p class="field-hint">
+                  Diisi dari snapshot idx lewat “Ambil harga”; bisa juga manual.
+                </p>
+              </div>
             </div>
           </div>`
         : nothing}
@@ -367,6 +475,7 @@ function investmentModal(app: App): TemplateResult {
                   app.setInvestmentField(
                     'nib',
                     (event.target as HTMLInputElement).value,
+                    true,
                   )}
               />
               ${fieldError('inv-nib-error', errors.nib)}
@@ -386,6 +495,7 @@ function investmentModal(app: App): TemplateResult {
                   app.setInvestmentField(
                     'nab',
                     (event.target as HTMLInputElement).value,
+                    true,
                   )}
               />
               ${fieldError('inv-nab-error', errors.nab)}
@@ -405,6 +515,7 @@ function investmentModal(app: App): TemplateResult {
                   app.setInvestmentField(
                     'units',
                     (event.target as HTMLInputElement).value,
+                    true,
                   )}
               />
               ${fieldError('inv-units-error', errors.units)}
@@ -453,6 +564,7 @@ function investmentModal(app: App): TemplateResult {
                   app.setInvestmentField(
                     'goldGrams',
                     (event.target as HTMLInputElement).value,
+                    true,
                   )}
               />
               ${fieldError('inv-gold-grams-error', errors.goldGrams)}
@@ -474,6 +586,7 @@ function investmentModal(app: App): TemplateResult {
                   app.setInvestmentField(
                     'goldCurrentPricePerGram',
                     (event.target as HTMLInputElement).value,
+                    true,
                   )}
               />
               ${fieldError('inv-gold-current-error', errors.goldCurrentPricePerGram)}
@@ -545,6 +658,8 @@ function investmentModal(app: App): TemplateResult {
             </div>
           </div>`
         : nothing}
+
+      ${currentValuePreview(app)}
 
       <div>
         <label class="field-label" for="inv-currency">Mata uang</label>
@@ -1303,6 +1418,45 @@ function settingsModal(app: App): TemplateResult {
           ? html`<p class="mt-2 text-sm text-danger" role="alert">${app.state.rateError}</p>`
           : nothing}
         ${currencyDatalist(app)}
+      </section>
+
+      <section class="border-t border-line pt-4" aria-labelledby="settings-stock">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h3 id="settings-stock" class="font-mono text-xs uppercase tracking-wider text-accent">
+            Harga saham (snapshot)
+          </h3>
+          <span class="badge">${app.state.stockSnapshot ? 'Tersedia' : 'Belum ada'}</span>
+        </div>
+        ${app.state.stockSnapshot
+          ? html`<p class="mt-2 font-mono text-xs leading-5 text-ink">
+              ${app.state.stockSnapshot.source}
+            </p>
+            <p class="mt-1 text-[10px] leading-4 text-faint">
+              Data pasar ${formatDateTime(app.state.stockSnapshot.asOf)} ·
+              diambil ${formatDateTime(app.state.stockSnapshot.fetchedAt)} ·
+              ${Object.keys(app.state.stockSnapshot.quotes).length} kode
+            </p>`
+          : html`<p class="mt-2 text-xs leading-5 text-muted">
+              ${app.state.stockSnapshotError || 'Belum tersedia. Coba saat online.'}
+            </p>`}
+        <div class="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            class="btn"
+            ?disabled=${app.state.stockSnapshotLoading}
+            @click=${() => void app.loadStockSnapshot(true)}
+          >
+            ${icon('refresh', 'size-4')}
+            ${app.state.stockSnapshotLoading ? 'Memuat…' : 'Perbarui snapshot'}
+          </button>
+          <span class="text-[10px] leading-4 text-faint">
+            Snapshot diperbarui otomatis harian oleh GitHub Action. Bukan
+            harga real-time; isi harga manual bila perlu.
+          </span>
+        </div>
+        ${app.state.stockSnapshotError
+          ? html`<p class="mt-2 text-sm text-danger" role="alert">${app.state.stockSnapshotError}</p>`
+          : nothing}
       </section>
 
       <section class="border-t border-line pt-4" aria-labelledby="settings-gold">

@@ -169,6 +169,7 @@ describe('category-specific investment fields', () => {
     });
     expect(saham.lots).toBe(10);
     expect(saham.stockCurrentPrice).toBe('1500');
+    expect(saham.stockCode).toBeUndefined();
     expect(saham.tenorMonths).toBe(0);
     expect(saham.annualInterestRate).toBe('0');
 
@@ -182,6 +183,17 @@ describe('category-specific investment fields', () => {
     expect(deposito.lots).toBe(0);
     expect(deposito.tenorMonths).toBe(12);
     expect(deposito.annualInterestRate).toBe('6');
+  });
+
+  it('normalizes an optional stock code and validates it', () => {
+    const saham = normalizeInvestmentInput({
+      ...base,
+      stockCode: ' bbca ',
+    });
+    expect(saham.stockCode).toBe('BBCA');
+    expect(() =>
+      normalizeInvestmentInput({ ...base, stockCode: 'B1' }),
+    ).toThrow(ValidationError);
   });
 
   it('normalizes Reksa Dana NIB, NAB, and units', () => {
