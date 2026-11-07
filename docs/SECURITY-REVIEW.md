@@ -260,6 +260,10 @@ all are fixed and the key paths have regression tests:
 - Cross-tab writes are serialized with Web Locks; PIN change copies the master key before any await so a racing lock cannot zero it.
 - Production dependency audit is clean; Actions are pinned to commit SHAs;
   Dependabot has a 7-day cooldown; `.npmrc` enforces a 7-day minimum release age.
+- The scheduled stock/gold updaters push with a dedicated write deploy key stored
+  as the `DEPLOY_KEY` Actions secret. The ruleset bypass is limited to
+  `DeployKey` actors; human changes still require pull requests and verified
+  signatures.
 - DAST was re-run after the dashboard, category-aware forms, charts, gold feed,
   and IDX snapshot lookup were added: 0 High / 0 Medium / 0 Low, 3 informational.
 

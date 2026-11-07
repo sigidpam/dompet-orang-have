@@ -92,6 +92,7 @@ soon as possible.
 - Cross-tab lock/change broadcasts and Web Locks-serialized writes; no sensitive data in analytics or logs
 - Gold reference JSON is same-origin; the scheduled updater has only `contents: write`, validates numeric ranges, and does not execute source markup
 - Stock prices are read from a same-origin daily snapshot; the scheduled updater has only `contents: write`, validates quote ranges/counts, and does not execute source markup
+- The stock and gold updaters push data commits with a dedicated write deploy key stored as the `DEPLOY_KEY` Actions secret; the ruleset's DeployKey bypass is scoped to that machine credential, while human pushes still require pull requests and verified signatures
 - Category-specific current values are validated numerically and rendered as text
 - PIN change copies the master key before PBKDF2 awaiting, preventing a racing lock from wrapping a zeroed key
 
