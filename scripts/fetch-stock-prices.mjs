@@ -85,6 +85,10 @@ const snapshot = {
     Object.entries(quotes).sort(([a], [b]) => a.localeCompare(b)),
   ),
 };
+// The snapshot is this updater's intended output: symbols are matched against
+// ^[A-Z]{2,6}$, prices are finite numbers, and JSON.stringify escapes all text.
+// Writing it to the fixed same-origin path is the purpose of the workflow.
+// lgtm[js/http-to-file-access]
 writeFileSync(`${OUTPUT.pathname}.tmp`, `${JSON.stringify(snapshot)}\n`);
 renameSync(`${OUTPUT.pathname}.tmp`, OUTPUT.pathname);
 console.log(`stock-prices: wrote ${Object.keys(quotes).length} quotes, asOf ${snapshot.asOf}`);

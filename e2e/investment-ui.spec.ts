@@ -87,7 +87,10 @@ test('category values, editing, net worth, and charts update', async ({
   await page.locator('#inv-lots').fill('10');
   await page.locator('#inv-stock-price').fill('1500');
   await page.getByRole('dialog').getByRole('button', { name: 'Tambah investasi' }).click();
-  await expect(page.getByText('BBCA')).toBeVisible();
+  await expect(page.getByRole('dialog')).toBeHidden({ timeout: 15_000 });
+  await expect(
+    page.getByTestId('investment-card').filter({ hasText: 'BBCA' }),
+  ).toBeVisible({ timeout: 15_000 });
   await expect(
     page.getByTestId('investment-card').filter({ hasText: 'BBCA' }).getByTestId('investment-current-value'),
   ).toBeVisible();
@@ -165,6 +168,9 @@ test('idx snapshot fetches a stock price and fills current value', async ({
   await page.locator('#inv-name').fill('BBCA');
   await page.locator('#inv-stock-code').fill('bbca');
   await page.getByRole('button', { name: 'Ambil harga' }).click();
+  await expect(page.locator('#inv-stock-price')).toHaveValue(/\d+/, {
+    timeout: 15_000,
+  });
 
   const price = await page.locator('#inv-stock-price').inputValue();
   expect(Number(price)).toBeGreaterThan(0);
@@ -185,5 +191,7 @@ test('idx snapshot fetches a stock price and fills current value', async ({
   await expect(
     page.getByRole('heading', { name: 'Harga saham (snapshot)' }),
   ).toBeVisible();
-  await expect(page.getByText(/ihsg\.midoriresearch\.com/)).toBeVisible();
+  await expect(
+    page.getByText('ihsg.midoriresearch.com', { exact: false }),
+  ).toBeVisible();
 });
