@@ -95,7 +95,21 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,svg,png,ico,webmanifest}'],
+        globPatterns: ['**/*.{js,css,html,svg,png,ico,webmanifest,json}'],
+        globIgnores: ['**/data/gold-price.json'],
+        runtimeCaching: [
+          {
+            // eslint-disable-next-line security/detect-unsafe-regex -- fixed literal path, bounded optional query
+            urlPattern: /\/data\/gold-price\.json(\?.*)?$/,
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'gold-price',
+              networkTimeoutSeconds: 5,
+              expiration: { maxEntries: 1, maxAgeSeconds: 7 * 24 * 60 * 60 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+        ],
         cleanupOutdatedCaches: true,
         clientsClaim: true,
         skipWaiting: false,

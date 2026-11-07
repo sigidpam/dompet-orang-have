@@ -142,6 +142,21 @@ export function formatIdr(value: Decimal.Value): string {
   return formatMoney(value, 'IDR');
 }
 
+export function formatCompactIdr(value: Decimal.Value): string {
+  const decimal = toDecimal(value);
+  try {
+    return new Intl.NumberFormat('id-ID', {
+      style: 'currency',
+      currency: 'IDR',
+      notation: 'compact',
+      maximumFractionDigits: 1,
+      minimumFractionDigits: 0,
+    }).format(Number(decimal));
+  } catch {
+    return formatIdr(decimal);
+  }
+}
+
 export function formatNumber(value: Decimal.Value, maxPlaces = 2): string {
   const decimal = toDecimal(value);
   try {

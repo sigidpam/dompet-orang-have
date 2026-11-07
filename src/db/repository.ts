@@ -45,6 +45,38 @@ function ensureCapacity(
   }
 }
 
+function investmentFromNormalized(
+  id: string,
+  createdAt: string,
+  normalized: ReturnType<typeof normalizeInvestmentInput>,
+): Investment {
+  return {
+    id,
+    createdAt,
+    name: normalized.name,
+    category: normalized.category,
+    principal: normalized.principal,
+    cashback: normalized.cashback,
+    annualInterestRate: normalized.annualInterestRate,
+    tenorMonths: normalized.tenorMonths,
+    lots: normalized.lots,
+    currency: normalized.currency,
+    ...(normalized.units ? { units: normalized.units } : {}),
+    ...(normalized.nab ? { nab: normalized.nab } : {}),
+    ...(normalized.nib ? { nib: normalized.nib } : {}),
+    ...(normalized.stockCurrentPrice
+      ? { stockCurrentPrice: normalized.stockCurrentPrice }
+      : {}),
+    ...(normalized.goldGrams ? { goldGrams: normalized.goldGrams } : {}),
+    ...(normalized.goldBuyPricePerGram
+      ? { goldBuyPricePerGram: normalized.goldBuyPricePerGram }
+      : {}),
+    ...(normalized.goldCurrentPricePerGram
+      ? { goldCurrentPricePerGram: normalized.goldCurrentPricePerGram }
+      : {}),
+  };
+}
+
 export class Repository {
   private data: Dataset;
 
@@ -211,16 +243,43 @@ export class Repository {
 
   async addInvestment(input: InvestmentFormInput): Promise<Investment> {
     const normalized = normalizeInvestmentInput(input);
-    const investment: Investment = {
-      id: newId('inv'),
-      ...normalized,
-      createdAt: new Date().toISOString(),
-    };
+    const investment = investmentFromNormalized(
+      newId('inv'),
+      new Date().toISOString(),
+      normalized,
+    );
     await this.mutate((draft) => {
       ensureCapacity(draft.investments.length, MAX_INVESTMENTS, 'investasi');
       draft.investments.push(investment);
     });
     return { ...investment };
+  }
+
+  async updateInvestment(
+    investmentId: string,
+    input: InvestmentFormInput,
+  ): Promise<Investment> {
+    const normalized = normalizeInvestmentInput(input);
+    const updated = await this.mutate((draft) => {
+      const index = draft.investments.findIndex(
+        (investment) => investment.id === investmentId,
+      );
+      if (index < 0) {
+        throw new ValidationError('Investasi tidak ditemukan.', 'investment');
+      }
+      const existing = draft.investments[index];
+      if (!existing) {
+        throw new ValidationError('Investasi tidak ditemukan.', 'investment');
+      }
+      const next = investmentFromNormalized(
+        existing.id,
+        existing.createdAt,
+        normalized,
+      );
+      draft.investments.splice(index, 1, next);
+      return next;
+    });
+    return { ...updated };
   }
 
   async deleteInvestment(investmentId: string): Promise<void> {

@@ -11,7 +11,7 @@ test('opt-in FX sync updates rates and IDR totals', async ({ page }) => {
   await page.getByRole('checkbox').check();
   await page.getByRole('button', { name: /Lanjut ke dashboard/ }).click();
 
-  await page.getByRole('button', { name: 'Rekening', exact: true }).click();
+  await page.getByTestId('quick-add-account').click();
   await page.locator('#acc-name').fill('USD Account');
   await page.locator('#acc-currency').fill('USD');
   await page.locator('#acc-balance').fill('10');

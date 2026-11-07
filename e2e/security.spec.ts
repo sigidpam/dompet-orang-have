@@ -17,7 +17,7 @@ test('finance data is rendered as inert text, never HTML', async ({ page }) => {
   await page.getByRole('checkbox').check();
   await page.getByRole('button', { name: /Lanjut ke dashboard/ }).click();
 
-  await page.getByRole('button', { name: 'Rekening', exact: true }).click();
+  await page.getByTestId('quick-add-account').click();
   const payload = '<img src=x onerror="window.__dompetXss=1">';
   await page.locator('#acc-name').fill(payload);
   await page.locator('#acc-balance').fill('100');

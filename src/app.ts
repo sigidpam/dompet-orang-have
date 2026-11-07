@@ -19,10 +19,16 @@ import {
 import { Repository } from './db/repository';
 import { vaultStore } from './db/store';
 import { downloadCsv } from './domain/csv';
+import { loadGoldPrice as fetchGoldPrice, type GoldPrice } from './domain/gold';
 import { formatIdr, todayIso, ValidationError } from './domain/money';
 import { currenciesInUse, fetchRatesFromFrankfurter } from './domain/rates';
 import { computeSummary, type Summary } from './domain/summary';
 import type { Dataset } from './domain/types';
+import {
+  RETURN_CATEGORIES,
+  TENOR_CATEGORIES,
+  type InvestmentCategory,
+} from './domain/types';
 import {
   assertDataset,
   type AccountFormInput,
@@ -104,6 +110,10 @@ export interface AppState {
   recoveryError: string;
   recoveryAcknowledged: boolean;
   recoveredSession: boolean;
+  editingInvestmentId: string | null;
+  goldPrice: GoldPrice | null;
+  goldPriceError: string;
+  goldPriceLoading: boolean;
   changePin: ChangePinForm;
   accountForm: AccountFormInput;
   accountErrors: Record<string, string>;
@@ -141,6 +151,13 @@ function defaultInvestmentForm(): InvestmentFormInput {
     tenorMonths: '12',
     lots: '0',
     currency: 'IDR',
+    units: '',
+    nab: '',
+    nib: '',
+    stockCurrentPrice: '',
+    goldGrams: '',
+    goldBuyPricePerGram: '',
+    goldCurrentPricePerGram: '',
   };
 }
 
@@ -186,6 +203,10 @@ function createInitialState(): AppState {
     recoveryError: '',
     recoveryAcknowledged: false,
     recoveredSession: false,
+    editingInvestmentId: null,
+    goldPrice: null,
+    goldPriceError: '',
+    goldPriceLoading: false,
     changePin: defaultChangePin(),
     accountForm: defaultAccountForm(),
     accountErrors: {},
@@ -270,6 +291,7 @@ export class App {
     this.startTicker();
     this.openChannel();
     this.render();
+    void this.loadGoldPrice(false);
   }
 
   private attachListeners(): void {
@@ -277,6 +299,7 @@ export class App {
       this.state.offline = false;
       this.render();
       void this.maybeAutoSyncRates();
+      void this.loadGoldPrice(false);
     });
     window.addEventListener('offline', () => {
       this.state.offline = true;
@@ -507,8 +530,42 @@ export class App {
     }
     const dataset = this.repository.snapshot();
     this.state.dataset = dataset;
-    this.state.summary = computeSummary(dataset);
+    this.state.summary = computeSummary(dataset, {
+      goldPricePerGramIdr: this.state.goldPrice?.pricePerGram,
+    });
     this.state.offline = !navigator.onLine;
+  }
+
+  async loadGoldPrice(manual = false): Promise<void> {
+    if (this.state.goldPriceLoading) return;
+    this.state.goldPriceLoading = true;
+    if (manual) {
+      this.state.goldPriceError = '';
+      this.render();
+    }
+    try {
+      const price = await fetchGoldPrice();
+      if (price) {
+        this.state.goldPrice = price;
+        this.state.goldPriceError = '';
+        this.refreshData();
+        if (manual) {
+          this.notify(
+            `Harga emas diperbarui: ${formatIdr(price.pricePerGram)}/gram.`,
+            'success',
+          );
+        }
+      } else {
+        this.state.goldPriceError =
+          'Harga emas belum tersedia. Nilai emas memakai nilai investasi atau harga manual.';
+        if (manual) {
+          this.notify('Gagal memuat harga emas. Coba lagi saat online.', 'error');
+        }
+      }
+    } finally {
+      this.state.goldPriceLoading = false;
+      this.render();
+    }
   }
 
   private async requestPersistence(): Promise<void> {
@@ -577,6 +634,9 @@ export class App {
     this.state.recoveryError = '';
     this.state.recoveryAcknowledged = false;
     this.state.recoveredSession = false;
+    this.state.editingInvestmentId = null;
+    this.state.goldPriceError = '';
+    this.state.goldPriceLoading = false;
     this.state.changePin = defaultChangePin();
     this.state.accountForm = defaultAccountForm();
     this.state.accountErrors = {};
@@ -790,6 +850,7 @@ export class App {
       this.pendingFocus = '#main';
       this.broadcast('changed');
       void this.maybeAutoSyncRates();
+      void this.loadGoldPrice(false);
     } catch (error) {
       if (session) {
         lockSession(session);
@@ -843,6 +904,7 @@ export class App {
     } else if (kind === 'investment') {
       this.state.investmentForm = defaultInvestmentForm();
       this.state.investmentErrors = {};
+      this.state.editingInvestmentId = null;
     } else if (kind === 'transaction') {
       const firstAccount = this.state.dataset?.accounts[0];
       this.state.transactionForm = defaultTransactionForm(firstAccount?.id ?? '');
@@ -882,6 +944,59 @@ export class App {
       return;
     }
     this.openModal('transaction');
+  }
+
+  openEditInvestment(investmentId: string): void {
+    const investment = this.state.dataset?.investments.find(
+      (candidate) => candidate.id === investmentId,
+    );
+    if (!investment) return;
+    this.openModal('investment');
+    this.state.editingInvestmentId = investment.id;
+    this.state.investmentForm = {
+      name: investment.name,
+      category: investment.category,
+      principal: investment.principal,
+      cashback: investment.cashback,
+      annualInterestRate: investment.annualInterestRate,
+      tenorMonths: String(investment.tenorMonths),
+      lots: String(investment.lots),
+      currency: investment.currency,
+      units: investment.units ?? '',
+      nab: investment.nab ?? '',
+      nib: investment.nib ?? '',
+      stockCurrentPrice: investment.stockCurrentPrice ?? '',
+      goldGrams: investment.goldGrams ?? '',
+      goldBuyPricePerGram: investment.goldBuyPricePerGram ?? '',
+      goldCurrentPricePerGram: investment.goldCurrentPricePerGram ?? '',
+    };
+    this.state.investmentErrors = {};
+    this.pendingFocus = '[data-autofocus]';
+    this.render();
+  }
+
+  setInvestmentCategory(category: string): void {
+    this.state.investmentForm.category = category;
+    this.state.investmentForm.lots = '0';
+    this.state.investmentForm.tenorMonths = TENOR_CATEGORIES.includes(
+      category as InvestmentCategory,
+    )
+      ? '12'
+      : '0';
+    this.state.investmentForm.annualInterestRate = RETURN_CATEGORIES.includes(
+      category as InvestmentCategory,
+    )
+      ? this.state.investmentForm.annualInterestRate
+      : '';
+    this.state.investmentForm.units = '';
+    this.state.investmentForm.nab = '';
+    this.state.investmentForm.nib = '';
+    this.state.investmentForm.stockCurrentPrice = '';
+    this.state.investmentForm.goldGrams = '';
+    this.state.investmentForm.goldBuyPricePerGram = '';
+    this.state.investmentForm.goldCurrentPricePerGram = '';
+    this.state.investmentErrors = {};
+    this.render();
   }
 
   openSettings(): void {
@@ -937,6 +1052,7 @@ export class App {
     this.state.modal = 'none';
     this.state.deleteTarget = null;
     this.state.deleteError = '';
+    this.state.editingInvestmentId = null;
     this.modalTrigger = null;
     this.render();
     this.flushPendingReload();
@@ -950,6 +1066,7 @@ export class App {
     this.state.modal = 'none';
     this.state.modalBusy = false;
     this.state.deleteTarget = null;
+    this.state.editingInvestmentId = null;
     this.modalTrigger = null;
     this.refreshData();
     this.broadcast('changed');
@@ -1088,8 +1205,17 @@ export class App {
     this.state.investmentErrors = {};
     this.render();
     try {
-      await this.repository.addInvestment(this.state.investmentForm);
-      this.finishModal('Investasi ditambahkan.');
+      const editing = this.state.editingInvestmentId;
+      if (editing) {
+        await this.repository.updateInvestment(
+          editing,
+          this.state.investmentForm,
+        );
+        this.finishModal('Investasi diperbarui.');
+      } else {
+        await this.repository.addInvestment(this.state.investmentForm);
+        this.finishModal('Investasi ditambahkan.');
+      }
     } catch (error) {
       this.setFormError('investment', error);
     } finally {

@@ -21,6 +21,8 @@ flowchart LR
   SW[Service worker<br/>app-shell cache] --> UI
   HOST[Static host<br/>GitHub Pages] --> SW
   RATES[api.frankfurter.dev<br/>optional, opt-in] -.->|currency codes only| UI
+  GOLD[public/data/gold-price.json<br/>same-origin spot reference] --> UI
+  GHA[GitHub Action<br/>daily XAU/USD + USD/IDR] -->|commit| GOLD
 ```
 
 ## Trust boundaries
@@ -72,7 +74,9 @@ generated with `crypto.randomUUID()` where available.
 Dataset (schemaVersion 2)
 ├── accounts[]      id, name, type, currency, balance, createdAt
 ├── transactions[]  id, accountId, type, category, amount, currency, date, createdAt
-├── investments[]   id, name, category, principal, cashback, rate, tenor, lots, currency
+├── investments[]   id, name, category, principal, cashback, rate, tenor, lots, currency,
+│                   units?, nab?, nib?, stockCurrentPrice?, goldGrams?,
+│                   goldBuyPricePerGram?, goldCurrentPricePerGram?
 ├── rates[]         currency, rateToIdr, source (manual|frankfurter), updatedAt
 ├── settings        autoLockMinutes, ratesAutoSync
 └── updatedAt
@@ -88,10 +92,40 @@ plaintext out of IndexedDB.
   shell (HTML, JS, CSS, icons, manifest).
 - Navigation falls back to the cached `index.html`.
 - API responses are not cached because there is no API.
+- `public/data/gold-price.json` is intentionally excluded from precache and uses
+  a NetworkFirst runtime cache, so the daily reference refreshes without waiting
+  for a new service worker; localStorage is the fallback.
 - Updates are prompt-based: a new service worker waits until the user chooses
   "Muat ulang"; `skipWaiting` is not enabled automatically.
 - The app is fully functional offline after the first successful load. The UI
   shows an offline banner and all reads/writes stay local.
+
+## Valuation model
+
+Net worth = liquid cash (bank/cash/e-wallet) + current investment value, all in
+IDR where a rate exists. Missing rates are surfaced, never converted at 1.0.
+
+| Category | Cost basis | Current value |
+|---|---|---|
+| Saham | Nilai Investasi − cashback | lot × 100 × current price/share when provided; otherwise cost |
+| Reksa Dana | Nilai Investasi − cashback | NIB when provided; otherwise units × NAB; otherwise cost |
+| Emas | purchase price/gram × grams − cashback | grams × manual current price/gram, else grams × spot reference, else cost |
+| Deposito / Obligasi / P2P / Crypto / Lainnya | Nilai Investasi − cashback | cost basis (category-specific fields kept as metadata) |
+
+The dashboard shows the net-worth hero, liquid/cash, portfolio current value,
+cost basis, estimated monthly return, unrealized gain, allocation (stacked bar,
+folded to six validated color slots) and a six-month cashflow bar chart. Charts
+are inline SVG with text labels in HTML, native hover titles, a legend, and a
+table fallback.
+
+## Gold pipeline
+
+`.github/workflows/gold-price.yml` runs daily and on demand. It fetches XAU/USD
+spot from gold-api.com and USD/IDR from Frankfurter, converts to IDR per troy
+gram, validates plausible ranges, writes `public/data/gold-price.json`, and
+commits it. The commit goes through the normal CI gate before Pages deploys.
+ANTAM's retail page rejects automated requests (403), so the feed is explicitly
+labeled spot and each gold asset supports a manual current price override.
 
 ## Key decisions
 
@@ -106,6 +140,9 @@ plaintext out of IndexedDB.
 | Missing FX rate = warning, not 1.0 | Silent 1.0 conversion produces plausible but wrong totals. |
 | Encrypted backups with a separate passphrase | A backup can be stored off-device without exposing the PIN or recovery code. |
 | CSV formula neutralization | Imported names can be attacker-controlled; spreadsheets execute formulas. |
+| Category-aware forms | Saham needs lots/price, Reksa Dana needs NIB/NAB/units, Emas needs grams/prices, and tenor only applies to Deposito/Obligasi. |
+| Spot gold reference + manual override | ANTAM blocks automated requests; a spot reference is honest and a per-asset override covers retail pricing. |
+| Same-origin gold JSON | Keeps the client CSP `connect-src 'self'`; the scheduled workflow, not the browser, talks to external gold/FX APIs. |
 | Web Locks around mutations | Prevents two tabs from overwriting each other with stale whole-dataset snapshots. |
 | Copy the master key before PIN-change await | A racing lock or auto-lock zeroes the session buffer; wrapping a zeroed key would lose the data key. |
 

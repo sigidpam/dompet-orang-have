@@ -149,6 +149,109 @@ describe('form validation', () => {
   });
 });
 
+describe('category-specific investment fields', () => {
+  const base = {
+    name: 'Aset',
+    category: 'Saham',
+    principal: '1000000',
+    cashback: '',
+    annualInterestRate: '',
+    tenorMonths: '12',
+    lots: '0',
+    currency: 'IDR',
+  };
+
+  it('keeps lots and current price for Saham only', () => {
+    const saham = normalizeInvestmentInput({
+      ...base,
+      lots: '10',
+      stockCurrentPrice: '1500',
+    });
+    expect(saham.lots).toBe(10);
+    expect(saham.stockCurrentPrice).toBe('1500');
+    expect(saham.tenorMonths).toBe(0);
+    expect(saham.annualInterestRate).toBe('0');
+
+    const deposito = normalizeInvestmentInput({
+      ...base,
+      category: 'Deposito',
+      lots: '10',
+      tenorMonths: '12',
+      annualInterestRate: '6',
+    });
+    expect(deposito.lots).toBe(0);
+    expect(deposito.tenorMonths).toBe(12);
+    expect(deposito.annualInterestRate).toBe('6');
+  });
+
+  it('normalizes Reksa Dana NIB, NAB, and units', () => {
+    const fund = normalizeInvestmentInput({
+      ...base,
+      category: 'Reksa Dana',
+      nib: '1100000',
+      nab: '1234.5678',
+      units: '1000.25',
+    });
+    expect(fund.nib).toBe('1100000');
+    expect(fund.nab).toBe('1234.5678');
+    expect(fund.units).toBe('1000.25');
+    expect(fund.lots).toBe(0);
+    expect(fund.tenorMonths).toBe(0);
+
+    expect(() =>
+      normalizeInvestmentInput({
+        ...base,
+        category: 'Reksa Dana',
+        nab: '1234',
+      }),
+    ).toThrow(ValidationError);
+  });
+
+  it('computes Emas value from price per gram × grams', () => {
+    const gold = normalizeInvestmentInput({
+      ...base,
+      category: 'Emas',
+      principal: '',
+      goldBuyPricePerGram: '100000',
+      goldGrams: '2.5',
+      goldCurrentPricePerGram: '150000',
+    });
+    expect(gold.principal).toBe('250000');
+    expect(gold.goldBuyPricePerGram).toBe('100000');
+    expect(gold.goldGrams).toBe('2.5');
+    expect(gold.goldCurrentPricePerGram).toBe('150000');
+    expect(gold.lots).toBe(0);
+    expect(() =>
+      normalizeInvestmentInput({
+        ...base,
+        category: 'Emas',
+        principal: '',
+        goldBuyPricePerGram: '100000',
+      }),
+    ).toThrow(ValidationError);
+  });
+
+  it('does not keep tenor for P2P or a return rate for Emas', () => {
+    const p2p = normalizeInvestmentInput({
+      ...base,
+      category: 'P2P Lending',
+      tenorMonths: '24',
+      annualInterestRate: '12',
+    });
+    expect(p2p.tenorMonths).toBe(0);
+    expect(p2p.annualInterestRate).toBe('12');
+    const gold = normalizeInvestmentInput({
+      ...base,
+      category: 'Emas',
+      principal: '',
+      goldBuyPricePerGram: '100000',
+      goldGrams: '1',
+      annualInterestRate: '12',
+    });
+    expect(gold.annualInterestRate).toBe('0');
+  });
+});
+
 describe('dataset import validation', () => {
   it('accepts an empty dataset and a valid round-trip', () => {
     const dataset = emptyDataset(new Date('2026-11-07T00:00:00.000Z'));
