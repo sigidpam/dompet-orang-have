@@ -155,6 +155,15 @@ describe('vault encryption', () => {
     ).rejects.toBeInstanceOf(VaultError);
   });
 
+  it('handles backups larger than the envelope field limit', async () => {
+    const payload = { blob: 'x'.repeat(10_000) };
+    const backup = await createBackup(payload, 'passphrase123', 1_000);
+    expect(backup.ct.length).toBeGreaterThan(4_096);
+    await expect(
+      openBackup(backup, 'passphrase123', (value) => value),
+    ).resolves.toEqual(payload);
+  });
+
   it('throttles repeated failures after five attempts', () => {
     for (let attempt = 1; attempt <= 4; attempt += 1) {
       registerFailedAttempt(1_000);

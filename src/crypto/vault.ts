@@ -282,9 +282,14 @@ function decodeField(
   record: Record<string, unknown>,
   key: string,
   expectedLength?: number,
+  maxLength = 4096,
 ): string {
   const value = record[key];
-  if (typeof value !== 'string' || value.length === 0 || value.length > 4096) {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > maxLength
+  ) {
     throw new VaultError('Data enkripsi rusak.', 'corrupt');
   }
   if (expectedLength !== undefined && base64UrlToBytes(value).length !== expectedLength) {
@@ -585,7 +590,7 @@ export async function openBackup<T>(
   const iterations = assertIterations(input.iterations);
   const salt = decodeField(input, 'salt', SALT_BYTES);
   const iv = decodeField(input, 'iv', IV_BYTES);
-  const ct = decodeField(input, 'ct');
+  const ct = decodeField(input, 'ct', undefined, 30_000_000);
   const kek = await deriveKek(passphrase.trim(), base64UrlToBytes(salt), iterations);
   const plaintext = await decryptBytes(
     kek,

@@ -35,9 +35,9 @@ tests. It is a best-effort review, not a formal third-party audit.
 | Bandit (archived Python) | **0 findings** |
 | OWASP ZAP | **0 High, 0 Medium, 0 Low**, 3 informational |
 | Secret scan | **0 findings** |
-| Unit/integration tests | 42 passed |
-| Browser E2E | 6 passed (desktop + Pixel 7) |
-| Coverage | 80.15% lines, 67.44% branches, 80.92% functions |
+| Unit/integration tests | 43 passed |
+| Browser E2E | 10 passed (desktop + Pixel 7) |
+| Coverage | 80.15% lines, 67.51% branches, 80.92% functions |
 
 ## Findings and resolutions
 
@@ -168,6 +168,8 @@ biometrics/passcode, and treat the device lock as the primary boundary.
   offline reload and unlock.
 - CSP meta present in production build; local icons; manifest installability
   verified via browser tests.
+- Opt-in FX sync only reaches the CSP-allowlisted origin and updates IDR totals;
+  the browser test intercepts the response and verifies the displayed rate.
 - Production dependency audit is clean; Actions are pinned to commit SHAs;
   Dependabot has a 7-day cooldown; `.npmrc` enforces a 7-day minimum release age.
 

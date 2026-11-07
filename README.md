@@ -47,8 +47,8 @@ This rebuild removes the server from the data path:
 | Bandit (archived Python prototype) | 0 findings |
 | OWASP ZAP quick scan (DAST) | 0 High, 0 Medium, 0 Low; 3 informational |
 | Secret scan | 0 findings |
-| Unit/integration tests | 42 passing |
-| Browser E2E tests | 6 passing (desktop + mobile) |
+| Unit/integration tests | 43 passing |
+| Browser E2E tests | 10 passing (desktop + mobile) |
 
 See [SECURITY.md](SECURITY.md) and the full
 [security review](docs/SECURITY-REVIEW.md) for scope, residual risks, and the

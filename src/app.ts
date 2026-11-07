@@ -1081,7 +1081,8 @@ export class App {
   }
 
   async syncRates(silent = false): Promise<void> {
-    if (!this.repository) return;
+    const repository = this.repository;
+    if (!repository) return;
     if (!navigator.onLine) {
       if (!silent) {
         this.state.rateError = 'Tidak ada koneksi internet.';
@@ -1089,7 +1090,7 @@ export class App {
       }
       return;
     }
-    const current = this.repository.snapshot();
+    const current = repository.snapshot();
     const currencies = currenciesInUse(
       current.accounts.map((account) => account.currency),
       current.investments.map((investment) => investment.currency),
@@ -1114,7 +1115,14 @@ export class App {
     }
     try {
       const result = await fetchRatesFromFrankfurter(targets);
-      const count = await this.repository.applyRates(result);
+      // The vault may have locked while the request was in flight.
+      if (this.repository !== repository || this.state.screen !== 'unlocked') {
+        return;
+      }
+      const count = await repository.applyRates(result);
+      if (this.repository !== repository) {
+        return;
+      }
       this.refreshData();
       this.broadcast('changed');
       if (!silent) {
