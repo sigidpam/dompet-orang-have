@@ -2,12 +2,15 @@ import type { Dataset } from './types';
 import { ACCOUNT_TYPE_LABELS, TRANSACTION_TYPE_LABELS } from './types';
 
 const FORMULA_PREFIX = /^[=+\-@\t\r]/;
+// eslint-disable-next-line security/detect-unsafe-regex -- anchored, bounded decimal grammar
+const PLAIN_NUMBER = /^-?\d+(\.\d+)?$/;
 
 export function csvCell(value: string | number): string {
   let text = String(value);
+  const isPlainNumber = PLAIN_NUMBER.test(text);
   if (
-    FORMULA_PREFIX.test(text) ||
-    /^[=+\-@]/.test(text.trimStart())
+    !isPlainNumber &&
+    (FORMULA_PREFIX.test(text) || /^[=+\-@]/.test(text.trimStart()))
   ) {
     text = `'${text}`;
   }

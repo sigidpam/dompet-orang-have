@@ -8,7 +8,9 @@ describe('CSV export', () => {
     expect(csvCell('a"b')).toBe('"a""b"');
     expect(csvCell('=1+1')).toBe('"\'=1+1"');
     expect(csvCell('+1')).toBe('"\'+1"');
-    expect(csvCell('-1')).toBe('"\'-1"');
+    expect(csvCell('-1')).toBe('"-1"');
+    expect(csvCell('-12.50')).toBe('"-12.50"');
+    expect(csvCell('-1+1')).toBe('"\'-1+1"');
     expect(csvCell('@SUM(A1)')).toBe('"\'@SUM(A1)"');
     expect(csvCell('\tcmd')).toBe(`"'\tcmd"`);
     expect(csvCell('  =1+1')).toBe('"\'  =1+1"');

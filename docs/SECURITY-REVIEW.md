@@ -67,9 +67,10 @@ as 2026-02-30.
 Exported names were written raw, so a value such as
 `=HYPERLINK("http://evil","x")` could execute in a spreadsheet.
 
-**Resolution:** `src/domain/csv.ts` prefixes dangerous cells with `'`, quotes all
-fields, and neutralizes leading `=`, `+`, `-`, `@`, tab, and carriage return.
-Unit tests cover each pattern.
+**Resolution:** `src/domain/csv.ts` prefixes dangerous non-numeric cells with
+`'`, quotes all fields, and neutralizes leading `=`, `+`, `-`, `@`, tab, and
+carriage return. Plain numeric values (including negative balances) stay
+numeric. Unit tests cover each pattern.
 
 ### F4 — Third-party CDN supply chain and CSP (High, resolved)
 
