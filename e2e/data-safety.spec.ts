@@ -13,7 +13,7 @@ test('setup never overwrites surviving ciphertext when the envelope is missing',
   await page.getByRole('checkbox').check();
   await page.getByRole('button', { name: /Lanjut ke dashboard/ }).click();
 
-  await page.getByRole('button', { name: 'Rekening', exact: true }).click();
+  await page.getByTestId('quick-add-account').click();
   await page.locator('#acc-name').fill('Data Selamat');
   await page.locator('#acc-balance').fill('100');
   await page.getByRole('button', { name: 'Simpan rekening' }).click();
@@ -62,7 +62,11 @@ test('forgotten-PIN reset accepts case-insensitive confirmation', async ({
   await page.getByRole('button', { name: /Kunci vault/ }).click();
 
   await page.getByRole('button', { name: /Lupa PIN/ }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Hapus semua data lokal' }),
+  ).toBeVisible();
   await page.locator('#reset-confirm').fill('hapus');
+  await expect(page.locator('#reset-confirm')).toHaveValue('hapus');
   const confirm = page.getByRole('button', { name: 'Hapus permanen' });
   await expect(confirm).toBeEnabled();
   await confirm.click();

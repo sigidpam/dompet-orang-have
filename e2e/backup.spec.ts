@@ -11,7 +11,7 @@ test('encrypted backup export and import round-trip', async ({ page }) => {
   await page.getByRole('checkbox').check();
   await page.getByRole('button', { name: /Lanjut ke dashboard/ }).click();
 
-  await page.getByRole('button', { name: 'Rekening', exact: true }).click();
+  await page.getByTestId('quick-add-account').click();
   await page.locator('#acc-name').fill('Rekening Asli');
   await page.locator('#acc-balance').fill('100');
   await page.getByRole('button', { name: 'Simpan rekening' }).click();
@@ -29,7 +29,7 @@ test('encrypted backup export and import round-trip', async ({ page }) => {
   const backupPath = await download.path();
   expect(backupPath).toBeTruthy();
 
-  await page.getByRole('button', { name: 'Rekening', exact: true }).click();
+  await page.getByTestId('quick-add-account').click();
   await page.locator('#acc-name').fill('Rekening Sementara');
   await page.locator('#acc-balance').fill('50');
   await page.getByRole('button', { name: 'Simpan rekening' }).click();

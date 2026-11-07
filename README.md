@@ -27,6 +27,14 @@ This rebuild removes the server from the data path:
 - Recovery code generated once at setup, plus encrypted JSON backups
 - Accounts (bank, cash, e-wallet), income/expense transactions with automatic
   balance updates, and investment portfolio with estimated monthly returns
+- Dashboard after unlock: net worth hero, liquid cash, portfolio value, cost
+  basis, unrealized gain, estimated monthly return, allocation and 6-month
+  cashflow charts (inline SVG with table fallbacks)
+- Category-aware investment editor: Saham lots + current price per share,
+  Reksa Dana NIB + NAB + units, Emas purchase price/grams/current price, and
+  tenor only for Deposito/Obligasi; edit an asset to refresh its current value
+- Daily gold reference price from a scheduled GitHub Action, with a manual
+  per-asset override when you want the ANTAM retail price instead of spot
 - Exact decimal arithmetic (`decimal.js`) instead of floating-point money
 - FX rates to IDR with manual entry and optional, opt-in Frankfurter sync; missing
   rates are surfaced instead of silently treated as 1.0
@@ -47,8 +55,8 @@ This rebuild removes the server from the data path:
 | Bandit (archived Python prototype) | 0 findings |
 | OWASP ZAP quick scan (DAST) | 0 High, 0 Medium, 0 Low; 3 informational |
 | Secret scan | 0 findings |
-| Unit/integration tests | 50 passing |
-| Browser E2E tests | 14 passing (desktop + mobile) |
+| Unit/integration tests | 63 passing |
+| Browser E2E tests | 18 passing (desktop + mobile) |
 
 See [SECURITY.md](SECURITY.md) and the full
 [security review](docs/SECURITY-REVIEW.md) for scope, residual risks, and the
@@ -105,6 +113,8 @@ The production target is GitHub Pages with a project path
 3. Merge to `main`. `.github/workflows/deploy.yml` waits for the `CI` workflow
    to succeed, builds the merged commit with `BASE_PATH=/<repo>/`, and deploys
    `dist/`.
+4. The daily `Update gold price` workflow commits a fresh reference price;
+   CI and Pages deployment run for that commit as usual.
 
 CI on pull requests runs lint, typecheck, coverage, build, secret scan, E2E,
 Semgrep, Bandit, and a production dependency audit. CodeQL runs on `main`, PRs,
@@ -149,8 +159,10 @@ and PWA caching strategy.
 ```text
 src/crypto/       PBKDF2/AES-GCM vault, recovery code, encrypted backups
 src/db/           IndexedDB store + repository
-src/domain/       money, validation, summary, CSV, rate sync, types
-src/ui/           Lit views: lock/setup, dashboard, modals, icons
+src/domain/       money, validation, summary, CSV, rate sync, gold feed, types
+src/ui/           Lit views: lock/setup, dashboard, charts, modals, icons
+public/data/      same-origin gold reference price consumed by the PWA
+scripts/          icon generation, secret scan, gold price fetch
 src/app.ts        application controller (state, actions, focus, auto-lock)
 tests/            Vitest unit/integration tests
 e2e/              Playwright desktop/mobile tests
@@ -158,11 +170,19 @@ legacy/api/       archived FastAPI prototype — do not deploy
 docs/             architecture and security review
 ```
 
-## Optional FX sync
+## Optional FX and gold sync
 
-Rate sync is off by default. When enabled, it sends only ISO currency codes (no
-amounts, accounts, or identifiers) to `api.frankfurter.dev`, which is the only
-external origin allowed by the CSP. Manual rates always remain available offline.
+FX rate sync is off by default. When enabled, it sends only ISO currency codes
+(no amounts, accounts, or identifiers) to `api.frankfurter.dev`, which is the
+only external origin allowed by the CSP. Manual rates always remain available
+offline.
+
+Gold has a daily reference feed. `.github/workflows/gold-price.yml` fetches
+XAU/USD spot and USD/IDR, writes `public/data/gold-price.json` on the same origin,
+and commits it. The PWA reads that file with a NetworkFirst service-worker cache;
+offline it falls back to localStorage. ANTAM's retail page returns 403 to
+automated requests, so the feed is explicitly labeled **spot**, not retail ANTAM.
+Each gold asset can override the reference with a manual current price per gram.
 
 ## License
 

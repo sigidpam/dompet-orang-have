@@ -222,4 +222,50 @@ describe('repository', () => {
     expect(verify.snapshot().accounts[0]?.balance).toBe('900');
     lockSession(session);
   });
+
+  it('updates investment prices and clears stale category fields', async () => {
+    const { session, repo } = await fresh();
+    const investment = await repo.addInvestment({
+      name: 'BBCA',
+      category: 'Saham',
+      principal: '1000000',
+      cashback: '',
+      annualInterestRate: '',
+      tenorMonths: '12',
+      lots: '10',
+      currency: 'IDR',
+      stockCurrentPrice: '1000',
+    });
+    expect(investment.stockCurrentPrice).toBe('1000');
+    const updated = await repo.updateInvestment(investment.id, {
+      name: 'BBCA',
+      category: 'Saham',
+      principal: '1000000',
+      cashback: '',
+      annualInterestRate: '',
+      tenorMonths: '12',
+      lots: '20',
+      currency: 'IDR',
+      stockCurrentPrice: '1500',
+    });
+    expect(updated.lots).toBe(20);
+    expect(updated.stockCurrentPrice).toBe('1500');
+
+    const changed = await repo.updateInvestment(investment.id, {
+      name: 'Deposito',
+      category: 'Deposito',
+      principal: '1000000',
+      cashback: '',
+      annualInterestRate: '6',
+      tenorMonths: '12',
+      lots: '0',
+      currency: 'IDR',
+    });
+    expect(changed.stockCurrentPrice).toBeUndefined();
+    expect(changed.lots).toBe(0);
+    expect(changed.tenorMonths).toBe(12);
+    expect(changed.annualInterestRate).toBe('6');
+    expect(repo.snapshot().investments).toHaveLength(1);
+    lockSession(session);
+  });
 });

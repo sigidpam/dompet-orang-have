@@ -1,11 +1,18 @@
 import {
   ACCOUNT_TYPES,
   DEFAULT_SETTINGS,
+  FUND_CATEGORY,
+  GOLD_CATEGORY,
+  INVESTMENT_CATEGORIES,
+  RETURN_CATEGORIES,
+  STOCK_CATEGORY,
+  TENOR_CATEGORIES,
   type Account,
   type AccountType,
   type Dataset,
   type ExchangeRate,
   type Investment,
+  type InvestmentCategory,
   type RateSource,
   type Settings,
   type Transaction,
@@ -15,6 +22,7 @@ import {
   Decimal,
   ValidationError,
   amountToString,
+  decimalToString,
   parseAmount,
   parseDate,
   parseDecimalInput,
@@ -166,17 +174,57 @@ export interface InvestmentFormInput {
   tenorMonths: string;
   lots: string;
   currency: string;
+  units?: string;
+  nab?: string;
+  nib?: string;
+  stockCurrentPrice?: string;
+  goldGrams?: string;
+  goldBuyPricePerGram?: string;
+  goldCurrentPricePerGram?: string;
 }
 
 export interface NormalizedInvestmentInput {
   name: string;
-  category: string;
+  category: InvestmentCategory;
   principal: string;
   cashback: string;
   annualInterestRate: string;
   tenorMonths: number;
   lots: number;
   currency: string;
+  units?: string;
+  nab?: string;
+  nib?: string;
+  stockCurrentPrice?: string;
+  goldGrams?: string;
+  goldBuyPricePerGram?: string;
+  goldCurrentPricePerGram?: string;
+}
+
+function optionalAmount(
+  raw: string,
+  field: string,
+  allowZero = false,
+): Decimal | undefined {
+  if (raw.trim() === '') return undefined;
+  const value = parseAmount(raw, field);
+  if (!allowZero && value.lte(0)) {
+    throw new ValidationError('Nilai harus lebih besar dari 0.', field);
+  }
+  return value;
+}
+
+function optionalDecimal(
+  raw: string,
+  field: string,
+  maxPlaces = 6,
+): Decimal | undefined {
+  if (raw.trim() === '') return undefined;
+  return parseDecimalInput(raw, field, {
+    min: 0,
+    max: 1_000_000_000_000,
+    maxPlaces,
+  });
 }
 
 export function normalizeInvestmentInput(
@@ -184,38 +232,116 @@ export function normalizeInvestmentInput(
 ): NormalizedInvestmentInput {
   const name = cleanText(input.name, 'name');
   const category = cleanText(input.category, 'category', CATEGORY_MAX);
-  const principal = parseAmount(input.principal, 'principal');
+  if (
+    !INVESTMENT_CATEGORIES.includes(category as InvestmentCategory)
+  ) {
+    throw new ValidationError('Kategori investasi tidak valid.', 'category');
+  }
+  const typedCategory = category as InvestmentCategory;
+  const isStock = typedCategory === STOCK_CATEGORY;
+  const isFund = typedCategory === FUND_CATEGORY;
+  const isGold = typedCategory === GOLD_CATEGORY;
+  const hasTenor = TENOR_CATEGORIES.includes(typedCategory);
+  const hasReturn = RETURN_CATEGORIES.includes(typedCategory);
+
+  const goldBuyPrice =
+    isGold
+      ? optionalAmount(input.goldBuyPricePerGram ?? '', 'goldBuyPricePerGram')
+      : undefined;
+  const goldGrams = isGold
+    ? optionalDecimal(input.goldGrams ?? '', 'goldGrams', 4)
+    : undefined;
+  if (isGold && (!goldBuyPrice || !goldGrams || goldGrams.lte(0))) {
+    throw new ValidationError(
+      'Harga beli per gram dan gramasi wajib diisi untuk emas.',
+      !goldBuyPrice ? 'goldBuyPricePerGram' : 'goldGrams',
+    );
+  }
+  const principal = isGold
+    ? (goldBuyPrice as Decimal)
+        .times(goldGrams as Decimal)
+        .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
+    : parseAmount(input.principal, 'principal');
   if (principal.lte(0)) {
-    throw new ValidationError('Modal harus lebih besar dari 0.', 'principal');
+    throw new ValidationError(
+      isGold ? 'Nilai investasi emas harus lebih besar dari 0.' : 'Nilai investasi harus lebih besar dari 0.',
+      isGold ? 'goldBuyPricePerGram' : 'principal',
+    );
   }
   const cashback =
-    input.cashback.trim() === '' ? new Decimal(0) : parseAmount(input.cashback, 'cashback');
+    input.cashback.trim() === ''
+      ? new Decimal(0)
+      : parseAmount(input.cashback, 'cashback');
   if (cashback.gt(principal)) {
     throw new ValidationError(
-      'Cashback tidak boleh melebihi modal.',
+      'Cashback tidak boleh melebihi nilai investasi.',
       'cashback',
     );
   }
   const annualInterestRate =
-    input.annualInterestRate.trim() === ''
-      ? new Decimal(0)
-      : parseDecimalInput(input.annualInterestRate, 'annualInterestRate', {
+    hasReturn && input.annualInterestRate.trim() !== ''
+      ? parseDecimalInput(input.annualInterestRate, 'annualInterestRate', {
           min: 0,
           max: 1000,
           maxPlaces: 4,
-        });
-  const tenorMonths = parseInteger(input.tenorMonths, 'tenorMonths', 0, 600);
-  const lots = parseInteger(input.lots, 'lots', 0, 1_000_000_000);
+        })
+      : new Decimal(0);
+  const tenorMonths = hasTenor
+    ? parseInteger(input.tenorMonths || '0', 'tenorMonths', 0, 600)
+    : 0;
+  const lots = isStock
+    ? parseInteger(input.lots || '0', 'lots', 0, 1_000_000_000)
+    : 0;
+  const stockCurrentPrice = isStock
+    ? optionalAmount(input.stockCurrentPrice ?? '', 'stockCurrentPrice')
+    : undefined;
+
+  const nib = isFund ? optionalAmount(input.nib ?? '', 'nib') : undefined;
+  const units = isFund
+    ? optionalDecimal(input.units ?? '', 'units', 6)
+    : undefined;
+  const nab = isFund ? optionalDecimal(input.nab ?? '', 'nab', 6) : undefined;
+  if (units && units.lte(0)) {
+    throw new ValidationError('Unit harus lebih besar dari 0.', 'units');
+  }
+  if (nab && nab.lte(0)) {
+    throw new ValidationError('NAB harus lebih besar dari 0.', 'nab');
+  }
+  if (isFund && ((units && !nab) || (!units && nab))) {
+    throw new ValidationError(
+      'Isi Unit dan NAB bersama agar nilai saat ini bisa dihitung.',
+      units ? 'nab' : 'units',
+    );
+  }
+
+  const goldCurrentPricePerGram = isGold
+    ? optionalAmount(input.goldCurrentPricePerGram ?? '', 'goldCurrentPricePerGram')
+    : undefined;
   const currency = normalizeCurrency(input.currency);
   return {
     name,
-    category,
+    category: typedCategory,
     principal: amountToString(principal),
     cashback: amountToString(cashback),
     annualInterestRate: annualInterestRate.toString(),
     tenorMonths,
     lots,
     currency,
+    ...(stockCurrentPrice
+      ? { stockCurrentPrice: amountToString(stockCurrentPrice) }
+      : {}),
+    ...(nib ? { nib: amountToString(nib) } : {}),
+    ...(units ? { units: decimalToString(units, 6) } : {}),
+    ...(nab ? { nab: decimalToString(nab, 6) } : {}),
+    ...(goldGrams ? { goldGrams: decimalToString(goldGrams, 4) } : {}),
+    ...(goldBuyPrice
+      ? { goldBuyPricePerGram: amountToString(goldBuyPrice) }
+      : {}),
+    ...(goldCurrentPricePerGram
+      ? {
+          goldCurrentPricePerGram: amountToString(goldCurrentPricePerGram),
+        }
+      : {}),
   };
 }
 
@@ -303,6 +429,37 @@ function assertArrayLength(value: unknown[], max: number, label: string): void {
   if (value.length > max) {
     throw new ValidationError(`Jumlah ${label} melebihi batas.`, label);
   }
+}
+
+function readOptionalAmount(
+  record: Record<string, unknown>,
+  key: string,
+  field: string,
+): string | undefined {
+  const raw = record[key];
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  if (typeof raw !== 'string' || !DECIMAL_RE.test(raw)) {
+    throw new ValidationError(`Nilai ${field} tidak valid.`, field);
+  }
+  const value = toDecimal(raw);
+  if (value.isNegative()) {
+    throw new ValidationError(`Nilai ${field} tidak boleh negatif.`, field);
+  }
+  return amountToString(value);
+}
+
+function readOptionalDecimal(
+  record: Record<string, unknown>,
+  key: string,
+  field: string,
+  maxPlaces = 6,
+): string | undefined {
+  const raw = record[key];
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  if (typeof raw !== 'string' || !RATE_RE.test(raw)) {
+    throw new ValidationError(`Nilai ${field} tidak valid.`, field);
+  }
+  return toDecimal(raw).toDecimalPlaces(maxPlaces).toString();
 }
 
 export function assertDataset(value: unknown): Dataset {
@@ -397,6 +554,25 @@ export function assertDataset(value: unknown): Dataset {
     if (typeof lots !== 'number' || !Number.isSafeInteger(lots) || lots < 0) {
       throw new ValidationError('Jumlah lot tidak valid.', 'lots');
     }
+    const units = readOptionalDecimal(item, 'units', 'units', 6);
+    const nab = readOptionalDecimal(item, 'nab', 'nab', 6);
+    const nib = readOptionalAmount(item, 'nib', 'nib');
+    const stockCurrentPrice = readOptionalAmount(
+      item,
+      'stockCurrentPrice',
+      'stockCurrentPrice',
+    );
+    const goldGrams = readOptionalDecimal(item, 'goldGrams', 'goldGrams', 4);
+    const goldBuyPricePerGram = readOptionalAmount(
+      item,
+      'goldBuyPricePerGram',
+      'goldBuyPricePerGram',
+    );
+    const goldCurrentPricePerGram = readOptionalAmount(
+      item,
+      'goldCurrentPricePerGram',
+      'goldCurrentPricePerGram',
+    );
     return {
       id,
       name: readString(item, 'name', 'name'),
@@ -408,6 +584,13 @@ export function assertDataset(value: unknown): Dataset {
       lots,
       currency: readCurrency(item),
       createdAt: readIso(item, 'createdAt'),
+      ...(units ? { units } : {}),
+      ...(nab ? { nab } : {}),
+      ...(nib ? { nib } : {}),
+      ...(stockCurrentPrice ? { stockCurrentPrice } : {}),
+      ...(goldGrams ? { goldGrams } : {}),
+      ...(goldBuyPricePerGram ? { goldBuyPricePerGram } : {}),
+      ...(goldCurrentPricePerGram ? { goldCurrentPricePerGram } : {}),
     };
   });
 

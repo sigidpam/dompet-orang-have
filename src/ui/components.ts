@@ -147,7 +147,7 @@ export function kpiCard(options: {
   label: string;
   value: string;
   iconName: IconName;
-  tone: 'income' | 'expense' | 'accent' | 'info';
+  tone: 'income' | 'expense' | 'accent' | 'info' | 'neutral';
   detail?: string;
 }): TemplateResult {
   const toneClass = {
@@ -155,6 +155,7 @@ export function kpiCard(options: {
     expense: 'text-expense',
     accent: 'text-accent',
     info: 'text-info',
+    neutral: 'text-ink',
   }[options.tone];
   return html`<article class="card p-4 sm:p-5">
     <div class="flex items-start justify-between gap-3">

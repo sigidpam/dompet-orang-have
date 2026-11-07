@@ -1,0 +1,37 @@
+name: Update gold price
+
+on:
+  schedule:
+    - cron: '17 1 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gold-price
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: Fetch and commit gold price
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Fetch gold price
+        run: node scripts/fetch-gold-price.mjs
+      - name: Commit if changed
+        run: |
+          if git diff --quiet -- public/data/gold-price.json; then
+            echo "No price change."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/data/gold-price.json
+          git commit -m "chore: update gold price"
+          git push

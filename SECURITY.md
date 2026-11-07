@@ -87,6 +87,8 @@ soon as possible.
 - CSV formula-injection neutralization
 - PWA service worker precaches the app shell only; no financial responses are cached
 - Cross-tab lock/change broadcasts and Web Locks-serialized writes; no sensitive data in analytics or logs
+- Gold reference JSON is same-origin (client CSP stays `self`); the scheduled updater has only `contents: write`, validates numeric ranges, and does not execute source markup
+- Category-specific current values are validated numerically and rendered as text
 - PIN change copies the master key before PBKDF2 awaiting, preventing a racing lock from wrapping a zeroed key
 
 ## Verification

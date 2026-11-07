@@ -206,6 +206,15 @@
     scrollbar-width: thin;
     scrollbar-color: var(--color-line-strong) transparent;
   }
+
+  .chart-bar {
+    transition: opacity 150ms ease;
+  }
+
+  .chart-bar:hover,
+  .chart-bar:focus-visible {
+    opacity: 0.78;
+  }
 }
 
 @media print {
@@ -256,6 +265,11 @@
 
   a[href]::after {
     content: none !important;
+  }
+
+  .chart-bar {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
   }
 
   .text-balance {

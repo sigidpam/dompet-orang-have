@@ -2,12 +2,23 @@ import { html, nothing, type TemplateResult } from 'lit';
 import type { App } from '../app';
 import {
   ACCOUNT_TYPE_LABELS,
+  FUND_CATEGORY,
+  GOLD_CATEGORY,
+  RETURN_CATEGORIES,
+  STOCK_CATEGORY,
+  TENOR_CATEGORIES,
   TRANSACTION_TYPE_LABELS,
   type Account,
+  type InvestmentCategory,
   type Transaction,
 } from '../domain/types';
-import type { AccountView, InvestmentView } from '../domain/summary';
+import type {
+  AccountView,
+  InvestmentView,
+  ValueSource,
+} from '../domain/summary';
 import {
+  Decimal,
   formatDate,
   formatIdr,
   formatMoney,
@@ -16,6 +27,7 @@ import {
 } from '../domain/money';
 import { icon } from './icons';
 import { cardHeader, emptyState, kpiCard } from './components';
+import { allocationChart, cashflowChart } from './charts';
 import {
   accountName,
   convertToIdr,
@@ -30,6 +42,10 @@ function accountIcon(type: Account['type']): TemplateResult {
 function signedAmount(transaction: Transaction): string {
   const sign = transaction.type === 'income' ? '+' : '−';
   return `${sign} ${formatMoney(transaction.amount, transaction.currency)}`;
+}
+
+function formatSignedIdr(value: Decimal): string {
+  return `${value.gte(0) ? '+' : '−'} ${formatIdr(value.abs())}`;
 }
 
 function idrEquivalent(
@@ -64,6 +80,107 @@ function navLink(label: string, href: string): TemplateResult {
     href=${href}
     >${label}</a
   >`;
+}
+
+function gainBadge(investment: InvestmentView): TemplateResult {
+  if (
+    investment.gainIdr === null ||
+    investment.gainPct === null ||
+    investment.gainIdr.isZero()
+  ) {
+    return html`<span class="badge">Nilai investasi</span>`;
+  }
+  const positive = investment.gainIdr.gte(0);
+  return html`<span
+    class=${`badge ${positive ? 'border-income/30 text-income' : 'border-expense/30 text-expense'}`}
+  >
+    ${icon(positive ? 'trendUp' : 'trendDown', 'size-3')}
+    ${formatSignedIdr(investment.gainIdr)} ·
+    ${formatNumber(investment.gainPct.abs(), 1)}%
+  </span>`;
+}
+
+const VALUE_SOURCE_LABELS: Record<ValueSource, string> = {
+  cost: 'Memakai nilai investasi',
+  stock: 'Memakai harga saham saat ini',
+  nib: 'Memakai NIB',
+  units: 'Unit × NAB',
+  'gold-override': 'Memakai harga emas manual',
+  'gold-market': 'Memakai harga emas acuan',
+};
+
+function investmentDetailRows(
+  app: App,
+  investment: InvestmentView,
+): Array<[string, string]> {
+  const rows: Array<[string, string]> = [];
+  const category = investment.category as InvestmentCategory;
+  if (category === STOCK_CATEGORY) {
+    rows.push(
+      ['Jumlah lot', `${formatNumber(investment.lots, 0)} lot`],
+      [
+        'Harga saat ini',
+        investment.stockCurrentPrice
+          ? formatMoney(investment.stockCurrentPrice, investment.currency)
+          : 'Belum diisi',
+      ],
+    );
+  } else if (category === FUND_CATEGORY) {
+    rows.push(
+      [
+        'NIB',
+        investment.nib ? formatMoney(investment.nib, investment.currency) : 'Belum diisi',
+      ],
+      [
+        'NAB / unit',
+        investment.nab ? formatNumber(investment.nab, 4) : 'Belum diisi',
+      ],
+      [
+        'Unit',
+        investment.units ? formatNumber(investment.units, 4) : 'Belum diisi',
+      ],
+    );
+  } else if (category === GOLD_CATEGORY) {
+    const market = app.state.goldPrice;
+    const currentPrice = investment.goldCurrentPricePerGram
+      ? `${formatMoney(investment.goldCurrentPricePerGram, investment.currency)} (manual)`
+      : market
+        ? `${formatIdr(market.pricePerGram)}/g (acuan)`
+        : 'Belum tersedia';
+    rows.push(
+      [
+        'Gramasi',
+        investment.goldGrams
+          ? `${formatNumber(investment.goldGrams, 2)} gram`
+          : 'Belum diisi',
+      ],
+      [
+        'Harga beli / gram',
+        investment.goldBuyPricePerGram
+          ? formatMoney(investment.goldBuyPricePerGram, investment.currency)
+          : '—',
+      ],
+      ['Harga saat ini', currentPrice],
+    );
+  } else if (TENOR_CATEGORIES.includes(category)) {
+    rows.push(
+      ['Tenor', `${formatNumber(investment.tenorMonths, 0)} bulan`],
+      ['Bunga', formatPercent(investment.annualInterestRate)],
+    );
+  } else if (RETURN_CATEGORIES.includes(category)) {
+    rows.push(['Bunga', formatPercent(investment.annualInterestRate)]);
+  }
+  rows.push([
+    'Nilai investasi (net)',
+    formatMoney(investment.netPrincipal, investment.currency),
+  ]);
+  if (investment.monthlyReturn.gt(0)) {
+    rows.push([
+      'Est. return / bln',
+      formatMoney(investment.monthlyReturn, investment.currency),
+    ]);
+  }
+  return rows;
 }
 
 function renderTransactionRow(
@@ -118,8 +235,12 @@ function renderTransactionRow(
   </li>`;
 }
 
-function renderInvestmentCard(app: App, investment: InvestmentView): TemplateResult {
-  return html`<article class="card flex flex-col p-4">
+function renderInvestmentCard(
+  app: App,
+  investment: InvestmentView,
+): TemplateResult {
+  const rows = investmentDetailRows(app, investment);
+  return html`<article class="card flex flex-col p-4" data-testid="investment-card">
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
         <h3 class="truncate text-sm font-bold text-ink">${investment.name}</h3>
@@ -130,56 +251,59 @@ function renderInvestmentCard(app: App, investment: InvestmentView): TemplateRes
             : nothing}
         </p>
       </div>
-      <button
-        type="button"
-        class="btn-icon -mr-2 -mt-2 shrink-0 text-faint hover:text-danger"
-        aria-label=${`Hapus investasi ${investment.name}`}
-        @click=${() =>
-          app.requestDelete('investment', investment.id, investment.name)}
-      >
-        ${icon('trash', 'size-4')}
-      </button>
+      <div class="flex shrink-0 items-start">
+        <button
+          type="button"
+          class="btn-icon -mt-2 text-faint hover:text-ink"
+          aria-label=${`Ubah investasi ${investment.name}`}
+          @click=${() => app.openEditInvestment(investment.id)}
+        >
+          ${icon('edit', 'size-4')}
+        </button>
+        <button
+          type="button"
+          class="btn-icon -mr-2 -mt-2 text-faint hover:text-danger"
+          aria-label=${`Hapus investasi ${investment.name}`}
+          @click=${() =>
+            app.requestDelete('investment', investment.id, investment.name)}
+        >
+          ${icon('trash', 'size-4')}
+        </button>
+      </div>
     </div>
 
-    <dl class="mt-4 grid grid-cols-2 gap-3 text-xs">
+    <div class="mt-4 flex flex-wrap items-end justify-between gap-2">
       <div>
-        <dt class="text-faint">Modal net</dt>
-        <dd class="mt-0.5 font-mono font-semibold tabular text-ink">
-          ${formatMoney(investment.netPrincipal, investment.currency)}
-        </dd>
-        <dd class="mt-0.5 text-[10px] text-faint">
-          ${investment.principalIdr === null || investment.cashbackIdr === null
-            ? 'Kurs belum diatur'
-            : `≈ ${formatIdr(investment.principalIdr.minus(investment.cashbackIdr))}`}
-        </dd>
+        <p class="text-[10px] uppercase tracking-wider text-faint">
+          Nilai saat ini
+        </p>
+        <p class="mt-0.5 font-mono text-lg font-bold tabular text-ink" data-testid="investment-current-value">
+          ${formatMoney(investment.currentValue, investment.currency)}
+        </p>
+        <p class="mt-0.5 text-[10px] text-faint">
+          ${investment.currency === 'IDR'
+            ? 'Rupiah'
+            : investment.currentValueIdr === null
+              ? 'Kurs belum diatur'
+              : `≈ ${formatIdr(investment.currentValueIdr)}`}
+        </p>
       </div>
-      <div>
-        <dt class="text-faint">Est. return / bln</dt>
-        <dd class="mt-0.5 font-mono font-semibold tabular text-accent">
-          ${formatMoney(investment.monthlyReturn, investment.currency)}
-        </dd>
-        <dd class="mt-0.5 text-[10px] text-faint">
-          ${investment.monthlyReturnIdr === null
-            ? 'Kurs belum diatur'
-            : `≈ ${formatIdr(investment.monthlyReturnIdr)}`}
-        </dd>
-      </div>
-      <div>
-        <dt class="text-faint">Bunga p.a.</dt>
-        <dd class="mt-0.5 tabular text-ink">
-          ${formatPercent(investment.annualInterestRate)}
-        </dd>
-      </div>
-      <div>
-        <dt class="text-faint">Cashback</dt>
-        <dd class="mt-0.5 tabular text-income">
-          ${formatMoney(investment.cashback, investment.currency)}
-        </dd>
-      </div>
+      <div class="text-right">${gainBadge(investment)}</div>
+    </div>
+
+    <dl class="mt-4 grid grid-cols-2 gap-2 border-t border-line pt-3 text-xs">
+      ${rows.map(
+        ([label, value]) => html`<div class="min-w-0">
+          <dt class="text-[10px] text-faint">${label}</dt>
+          <dd class="mt-0.5 truncate font-mono tabular text-ink" title=${value}>
+            ${value}
+          </dd>
+        </div>`,
+      )}
     </dl>
 
-    <p class="mt-4 border-t border-line pt-3 text-[10px] uppercase tracking-wider text-faint">
-      ${investment.tenorMonths} bulan · ${formatNumber(investment.lots, 0)} lot
+    <p class="mt-3 text-[10px] text-faint">
+      ${VALUE_SOURCE_LABELS[investment.valueSource]}
     </p>
   </article>`;
 }
@@ -226,92 +350,175 @@ function renderAccountCard(app: App, account: AccountView): TemplateResult {
   </article>`;
 }
 
-function summarySection(app: App): TemplateResult {
+function heroSection(app: App): TemplateResult {
   const summary = app.state.summary;
   if (!summary) return html``;
-  const netTone = summary.netCashflowIdr.gte(0) ? 'text-income' : 'text-expense';
+  const gain = summary.unrealizedGainIdr;
+  const positive = gain.gte(0);
+  const pct = summary.unrealizedGainPct;
   return html`<section id="ringkasan" class="scroll-mt-28" aria-labelledby="ringkasan-title">
     <h2 class="sr-only" id="ringkasan-title">Ringkasan keuangan</h2>
-    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      ${kpiCard({
-        label: 'Total Pendapatan',
-        value: formatIdr(summary.totalIncomeIdr),
-        iconName: 'trendUp',
-        tone: 'income',
-        detail: 'Akumulasi seluruh pemasukan',
-      })}
-      ${kpiCard({
-        label: 'Total Pengeluaran',
-        value: formatIdr(summary.totalExpenseIdr),
-        iconName: 'trendDown',
-        tone: 'expense',
-        detail: 'Akumulasi seluruh pengeluaran',
-      })}
-      ${kpiCard({
-        label: 'Dana Liquid / Cash',
-        value: formatIdr(summary.liquidCashIdr),
-        iconName: 'wallet',
-        tone: 'info',
-        detail: `${formatNumber(summary.accounts.length, 0)} rekening terdaftar`,
-      })}
-      ${kpiCard({
-        label: 'Est. Return Investasi',
-        value: formatIdr(summary.estMonthlyReturnIdr),
-        iconName: 'chart',
-        tone: 'accent',
-        detail: `Per bulan · modal ${formatIdr(summary.totalPrincipalIdr)}`,
-      })}
+    <div class="grid gap-3 lg:grid-cols-[1.05fr_1.55fr]">
+      <article class="card relative overflow-hidden border-accent/30 p-5 sm:p-6">
+        <div
+          class="pointer-events-none absolute -right-10 -top-10 text-accent/5"
+          aria-hidden="true"
+        >
+          ${icon('shield', 'size-44')}
+        </div>
+        <p class="kpi-label">Kekayaan bersih</p>
+        <p class="mt-2 font-mono text-4xl font-bold tracking-tight text-ink sm:text-5xl" data-testid="net-worth">
+          ${formatIdr(summary.netWorthIdr)}
+        </p>
+        <div class="mt-4 flex flex-wrap gap-2">
+          <span
+            class=${`badge ${positive ? 'border-income/30 text-income' : 'border-expense/30 text-expense'}`}
+          >
+            ${icon(positive ? 'trendUp' : 'trendDown', 'size-3')}
+            ${formatSignedIdr(gain)}
+            ${pct === null ? '' : ` · ${formatNumber(pct.abs(), 1)}%`}
+          </span>
+          <span class="badge">vs nilai investasi</span>
+        </div>
+        <p class="mt-4 max-w-md text-xs leading-5 text-muted">
+          Dana liquid + nilai portofolio saat ini. Emas memakai harga acuan,
+          Saham memakai harga per lembar, Reksa Dana memakai NIB/NAB.
+        </p>
+      </article>
+      <div class="grid grid-cols-2 gap-3">
+        ${kpiCard({
+          label: 'Dana Liquid / Cash',
+          value: formatIdr(summary.liquidCashIdr),
+          iconName: 'wallet',
+          tone: 'info',
+          detail: `${formatNumber(summary.accounts.length, 0)} rekening`,
+        })}
+        ${kpiCard({
+          label: 'Nilai Portofolio',
+          value: formatIdr(summary.portfolioCurrentIdr),
+          iconName: 'chart',
+          tone: 'accent',
+          detail: `${formatNumber(summary.investments.length, 0)} aset`,
+        })}
+        ${kpiCard({
+          label: 'Nilai Investasi',
+          value: formatIdr(summary.portfolioCostIdr),
+          iconName: 'wallet',
+          tone: 'neutral',
+          detail: 'Net setelah cashback',
+        })}
+        ${kpiCard({
+          label: 'Est. Return / Bulan',
+          value: formatIdr(summary.estMonthlyReturnIdr),
+          iconName: 'trendUp',
+          tone: 'income',
+          detail: 'Estimasi dari bunga tercatat',
+        })}
+      </div>
     </div>
+  </section>`;
+}
 
-    <div class="mt-3 flex flex-wrap items-center justify-between gap-2 border border-line bg-surface px-4 py-3">
-      <p class="font-mono text-[11px] uppercase tracking-wider text-muted">
-        Arus kas bersih
+function goldPriceStrip(app: App): TemplateResult | typeof nothing {
+  const summary = app.state.summary;
+  const hasGold =
+    summary?.investments.some(
+      (investment) => investment.category === GOLD_CATEGORY,
+    ) ?? false;
+  if (!hasGold && !app.state.goldPrice) return nothing;
+  const price = app.state.goldPrice;
+  return html`<section class="card mt-3 flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+    <div class="min-w-0">
+      <p class="kpi-label">Harga emas acuan</p>
+      ${price
+        ? html`<p class="mt-1 font-mono text-lg font-bold tabular text-accent">
+            ${formatIdr(price.pricePerGram)}<span class="ml-1 text-xs font-normal text-muted">/gram</span>
+          </p>`
+        : html`<p class="mt-1 text-sm text-muted">Belum tersedia</p>`}
+      <p class="mt-1 text-[10px] leading-4 text-faint">
+        ${price
+          ? `${price.source} · ${formatDate(price.updatedAt)}${price.sourceType === 'spot' ? ' · spot' : ''}`
+          : app.state.goldPriceError}
       </p>
-      <p class=${`font-mono text-sm font-bold tabular ${netTone}`}>
-        ${summary.netCashflowIdr.gte(0) ? '+' : '−'} ${formatIdr(
-          summary.netCashflowIdr.abs(),
-        )}
-      </p>
+    </div>
+    <div class="flex flex-wrap items-center gap-2">
+      <span class="badge">Diperbarui harian</span>
+      <button
+        type="button"
+        class="btn no-print"
+        ?disabled=${app.state.goldPriceLoading}
+        @click=${() => void app.loadGoldPrice(true)}
+      >
+        ${icon('refresh', 'size-4')}
+        ${app.state.goldPriceLoading ? 'Memuat…' : 'Perbarui'}
+      </button>
     </div>
   </section>`;
 }
 
 function actionsSection(app: App): TemplateResult {
-  return html`<section class="mt-6 no-print" aria-label="Aksi cepat">
+  return html`<section class="mt-4 no-print" aria-label="Aksi cepat">
     <div class="flex flex-wrap gap-2">
       <button
         type="button"
         class="btn btn-primary"
+        data-testid="quick-add-transaction"
         @click=${() => app.openAddTransaction()}
       >
-        ${icon('plus', 'size-4')} Tambah transaksi
-      </button>
-      <button type="button" class="btn" @click=${() => app.openModal('account')}>
-        ${icon('wallet', 'size-4')} Rekening
+        ${icon('plus', 'size-4')} Tambah Transaksi
       </button>
       <button
         type="button"
         class="btn"
+        data-testid="quick-add-account"
+        @click=${() => app.openModal('account')}
+      >
+        ${icon('plus', 'size-4')} Tambah Rekening
+      </button>
+      <button
+        type="button"
+        class="btn"
+        data-testid="quick-add-investment"
         @click=${() => app.openModal('investment')}
       >
-        ${icon('chart', 'size-4')} Investasi
+        ${icon('plus', 'size-4')} Tambah Investasi
       </button>
-      <button
-        type="button"
-        class="btn"
-        @click=${() => app.openSettings()}
-      >
+      <button type="button" class="btn" @click=${() => app.openSettings()}>
         ${icon('settings', 'size-4')} Pengaturan
       </button>
-      <button type="button" class="btn" @click=${() => app.exportCsv()}>
+    </div>
+    <div class="mt-2 flex flex-wrap gap-2 no-print">
+      <button type="button" class="btn btn-ghost" @click=${() => app.exportCsv()}>
         ${icon('download', 'size-4')} CSV
       </button>
-      <button type="button" class="btn" @click=${() => app.printReport()}>
-        ${icon('printer', 'size-4')} PDF
+      <button type="button" class="btn btn-ghost" @click=${() => app.printReport()}>
+        ${icon('printer', 'size-4')} Cetak / PDF
       </button>
-      <button type="button" class="btn" @click=${() => void app.shareSummary()}>
+      <button type="button" class="btn btn-ghost" @click=${() => void app.shareSummary()}>
         ${icon('share', 'size-4')} Bagikan
       </button>
+    </div>
+  </section>`;
+}
+
+function chartsSection(app: App): TemplateResult {
+  const summary = app.state.summary;
+  if (!summary) return html``;
+  const net = summary.netCashflowIdr;
+  return html`<section class="mt-4 grid items-start gap-3 lg:grid-cols-2" aria-label="Statistik">
+    <div class="card">
+      ${cardHeader(
+        'Alokasi portofolio',
+        `${formatIdr(summary.portfolioCurrentIdr)} nilai saat ini`,
+      )}
+      <div class="p-4">${allocationChart(summary.allocation)}</div>
+    </div>
+    <div class="card">
+      ${cardHeader(
+        'Arus kas 6 bulan',
+        `Bersih ${net.gte(0) ? '+' : '−'} ${formatIdr(net.abs())}`,
+      )}
+      <div class="p-4">${cashflowChart(summary.monthlyCashflow)}</div>
     </div>
   </section>`;
 }
@@ -352,7 +559,7 @@ function transactionsSection(app: App): TemplateResult {
               class="btn btn-primary"
               @click=${() => app.openModal('account')}
             >
-              ${icon('plus', 'size-4')} Tambah rekening
+              ${icon('plus', 'size-4')} Tambah Rekening
             </button>`,
           )
         : html`<ul class="divide-y divide-line">
@@ -375,9 +582,7 @@ function portfolioSection(app: App): TemplateResult {
     <div class="card">
       ${cardHeader(
         'Portofolio investasi',
-        `${formatNumber(summary.investments.length, 0)} aset · est. ${formatIdr(
-          summary.estMonthlyReturnIdr,
-        )}/bulan`,
+        `${formatNumber(summary.investments.length, 0)} aset · nilai saat ini ${formatIdr(summary.portfolioCurrentIdr)}`,
         html`<button
           type="button"
           class="btn no-print"
@@ -390,7 +595,7 @@ function portfolioSection(app: App): TemplateResult {
         ? emptyState(
             'chart',
             'Portofolio masih kosong',
-            'Catat deposito, saham, reksa dana, atau aset lain untuk melihat estimasi return bulanan.',
+            'Catat saham, reksa dana, deposito, obligasi, emas, atau aset lain. Isian menyesuaikan kategori.',
           )
         : html`<div class="grid grid-cols-1 gap-3 p-3 md:grid-cols-2">
             ${summary.investments.map((investment) =>
@@ -431,7 +636,7 @@ function accountsSection(app: App): TemplateResult {
               class="btn btn-primary"
               @click=${() => app.openModal('account')}
             >
-              ${icon('plus', 'size-4')} Tambah rekening
+              ${icon('plus', 'size-4')} Tambah Rekening
             </button>`,
           )
         : html`<div class="grid grid-cols-1 gap-3 p-3 md:grid-cols-2 xl:grid-cols-3">
@@ -544,17 +749,18 @@ export function renderDashboard(app: App): TemplateResult {
             </p>
             <div class="mt-4 flex flex-wrap gap-2 no-print">
               <button type="button" class="btn btn-primary" @click=${() => app.openModal('account')}>
-                ${icon('plus', 'size-4')} Tambah rekening
+                ${icon('plus', 'size-4')} Tambah Rekening
               </button>
               <button type="button" class="btn" @click=${() => app.openModal('investment')}>
-                ${icon('chart', 'size-4')} Tambah investasi
+                ${icon('chart', 'size-4')} Tambah Investasi
               </button>
             </div>
           </section>`
         : nothing}
 
-      ${summarySection(app)} ${actionsSection(app)} ${transactionsSection(app)}
-      ${portfolioSection(app)} ${accountsSection(app)}
+      ${heroSection(app)} ${goldPriceStrip(app)} ${actionsSection(app)}
+      ${chartsSection(app)} ${portfolioSection(app)} ${transactionsSection(app)}
+      ${accountsSection(app)}
 
       <footer class="mt-8 border-t border-line pt-4 text-[11px] leading-5 text-faint">
         <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -567,8 +773,9 @@ export function renderDashboard(app: App): TemplateResult {
           </p>
         </div>
         <p class="mt-2 max-w-3xl">
-          Aplikasi ini bukan nasihat keuangan. Jangan gunakan PIN yang sama dengan
-          PIN bank. Ekspor backup terenkripsi secara berkala.
+          Aplikasi ini bukan nasihat keuangan. Harga emas acuan adalah spot
+          internasional, bukan harga retail ANTAM; gunakan harga manual per aset
+          bila perlu. Jangan gunakan PIN yang sama dengan PIN bank.
         </p>
       </footer>
     </main>

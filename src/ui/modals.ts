@@ -1,7 +1,16 @@
 import { html, nothing, type TemplateResult } from 'lit';
 import type { App } from '../app';
-import { CURATED_CURRENCIES, INVESTMENT_CATEGORIES } from '../domain/types';
-import { formatDateTime, formatRate } from '../domain/money';
+import {
+  CURATED_CURRENCIES,
+  FUND_CATEGORY,
+  GOLD_CATEGORY,
+  INVESTMENT_CATEGORIES,
+  RETURN_CATEGORIES,
+  STOCK_CATEGORY,
+  TENOR_CATEGORIES,
+  type InvestmentCategory,
+} from '../domain/types';
+import { formatDateTime, formatIdr, formatRate } from '../domain/money';
 import { icon } from './icons';
 import { errorSummary, fieldError, modalShell } from './components';
 
@@ -21,6 +30,13 @@ const INVESTMENT_FIELD_IDS: Record<string, string> = {
   tenorMonths: 'inv-tenor',
   lots: 'inv-lots',
   currency: 'inv-currency',
+  units: 'inv-units',
+  nab: 'inv-nab',
+  nib: 'inv-nib',
+  stockCurrentPrice: 'inv-stock-price',
+  goldGrams: 'inv-gold-grams',
+  goldBuyPricePerGram: 'inv-gold-buy',
+  goldCurrentPricePerGram: 'inv-gold-current',
 };
 
 const TRANSACTION_FIELD_IDS: Record<string, string> = {
@@ -184,9 +200,24 @@ function accountModal(app: App): TemplateResult {
 function investmentModal(app: App): TemplateResult {
   const form = app.state.investmentForm;
   const errors = app.state.investmentErrors;
+  const editing = app.state.editingInvestmentId !== null;
+  const category = form.category as InvestmentCategory;
+  const isStock = category === STOCK_CATEGORY;
+  const isFund = category === FUND_CATEGORY;
+  const isGold = category === GOLD_CATEGORY;
+  const hasTenor = TENOR_CATEGORIES.includes(category);
+  const hasReturn = RETURN_CATEGORIES.includes(category);
+  const categoryOptions: string[] = [...INVESTMENT_CATEGORIES];
+  if (!categoryOptions.includes(form.category)) {
+    categoryOptions.unshift(form.category);
+  }
+  const market = app.state.goldPrice;
+
   return modalShell({
-    title: 'Tambah investasi',
-    subtitle: 'Return bulanan dihitung dari modal net setelah cashback.',
+    title: editing ? 'Ubah investasi' : 'Tambah investasi',
+    subtitle: editing
+      ? 'Perbarui nilai investasi, harga saat ini, atau NIB/NAB agar portofolio akurat.'
+      : 'Pilih kategori; isian menyesuaikan jenis aset.',
     onClose: () => app.closeModal(),
     closeDisabled: app.state.modalBusy,
     wide: true,
@@ -199,7 +230,26 @@ function investmentModal(app: App): TemplateResult {
       }}
     >
       ${errorSummary(errors, INVESTMENT_FIELD_IDS)}
-      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-[1.1fr_1.4fr]">
+        <div>
+          <label class="field-label" for="inv-category">Kategori</label>
+          <select
+            id="inv-category"
+            class="field-input"
+            .value=${form.category}
+            aria-invalid=${errors.category ? 'true' : 'false'}
+            aria-describedby=${errors.category ? 'inv-category-error' : nothing}
+            @change=${(event: Event) =>
+              app.setInvestmentCategory(
+                (event.target as HTMLSelectElement).value,
+              )}
+          >
+            ${categoryOptions.map(
+              (option) => html`<option value=${option}>${option}</option>`,
+            )}
+          </select>
+          ${fieldError('inv-category-error', errors.category)}
+        </div>
         <div>
           <label class="field-label" for="inv-name">Nama aset</label>
           <input
@@ -207,7 +257,7 @@ function investmentModal(app: App): TemplateResult {
             class="field-input"
             type="text"
             maxlength="80"
-            placeholder="SBN Ritel, BBCA, Deposito…"
+            placeholder="BBCA, SBN Ritel, Reksa Dana Pasar Uang…"
             .value=${form.name}
             data-autofocus
             aria-invalid=${errors.name ? 'true' : 'false'}
@@ -220,131 +270,282 @@ function investmentModal(app: App): TemplateResult {
           />
           ${fieldError('inv-name-error', errors.name)}
         </div>
-        <div>
-          <label class="field-label" for="inv-category">Kategori</label>
-          <input
-            id="inv-category"
-            class="field-input"
-            type="text"
-            maxlength="60"
-            list="investment-categories"
-            placeholder="Deposito"
-            .value=${form.category}
-            aria-invalid=${errors.category ? 'true' : 'false'}
-            aria-describedby=${errors.category ? 'inv-category-error' : nothing}
-            @input=${(event: Event) =>
-              app.setInvestmentField(
-                'category',
-                (event.target as HTMLInputElement).value,
-              )}
-          />
-          ${fieldError('inv-category-error', errors.category)}
-          <datalist id="investment-categories">
-            ${INVESTMENT_CATEGORIES.map(
-              (category) => html`<option value=${category}></option>`,
-            )}
-          </datalist>
-        </div>
       </div>
-      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div>
-          <label class="field-label" for="inv-principal">Modal kotor</label>
-          <input
-            id="inv-principal"
-            class="field-input font-mono tabular"
-            type="text"
-            inputmode="decimal"
-            placeholder="0"
-            .value=${form.principal}
-            aria-invalid=${errors.principal ? 'true' : 'false'}
-            aria-describedby=${errors.principal ? 'inv-principal-error' : nothing}
-            @input=${(event: Event) =>
-              app.setInvestmentField(
-                'principal',
-                (event.target as HTMLInputElement).value,
-              )}
-          />
-          ${fieldError('inv-principal-error', errors.principal)}
-        </div>
-        <div>
-          <label class="field-label" for="inv-cashback">Cashback</label>
-          <input
-            id="inv-cashback"
-            class="field-input font-mono tabular"
-            type="text"
-            inputmode="decimal"
-            placeholder="0"
-            .value=${form.cashback}
-            aria-invalid=${errors.cashback ? 'true' : 'false'}
-            aria-describedby=${errors.cashback ? 'inv-cashback-error' : nothing}
-            @input=${(event: Event) =>
-              app.setInvestmentField(
-                'cashback',
-                (event.target as HTMLInputElement).value,
-              )}
-          />
-          ${fieldError('inv-cashback-error', errors.cashback)}
-        </div>
-      </div>
-      <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <div>
-          <label class="field-label" for="inv-rate">Bunga % p.a.</label>
-          <input
-            id="inv-rate"
-            class="field-input font-mono tabular"
-            type="text"
-            inputmode="decimal"
-            placeholder="6"
-            .value=${form.annualInterestRate}
-            aria-invalid=${errors.annualInterestRate ? 'true' : 'false'}
-            aria-describedby=${errors.annualInterestRate ? 'inv-rate-error' : nothing}
-            @input=${(event: Event) =>
-              app.setInvestmentField(
-                'annualInterestRate',
-                (event.target as HTMLInputElement).value,
-              )}
-          />
-          ${fieldError('inv-rate-error', errors.annualInterestRate)}
-        </div>
-        <div>
-          <label class="field-label" for="inv-tenor">Tenor (bulan)</label>
-          <input
-            id="inv-tenor"
-            class="field-input font-mono tabular"
-            type="text"
-            inputmode="numeric"
-            placeholder="12"
-            .value=${form.tenorMonths}
-            aria-invalid=${errors.tenorMonths ? 'true' : 'false'}
-            aria-describedby=${errors.tenorMonths ? 'inv-tenor-error' : nothing}
-            @input=${(event: Event) =>
-              app.setInvestmentField(
-                'tenorMonths',
-                (event.target as HTMLInputElement).value,
-              )}
-          />
-          ${fieldError('inv-tenor-error', errors.tenorMonths)}
-        </div>
-        <div>
-          <label class="field-label" for="inv-lots">Lot</label>
-          <input
-            id="inv-lots"
-            class="field-input font-mono tabular"
-            type="text"
-            inputmode="numeric"
-            placeholder="0"
-            .value=${form.lots}
-            aria-invalid=${errors.lots ? 'true' : 'false'}
-            aria-describedby=${errors.lots ? 'inv-lots-error' : nothing}
-            @input=${(event: Event) =>
-              app.setInvestmentField(
-                'lots',
-                (event.target as HTMLInputElement).value,
-              )}
-          />
-          ${fieldError('inv-lots-error', errors.lots)}
-        </div>
-      </div>
+
+      ${isGold
+        ? html`<div class="border border-accent/30 bg-accent/5 p-3 text-xs leading-5 text-muted">
+            Nilai investasi dihitung otomatis dari <strong class="text-ink">harga beli × gramasi</strong>.
+            Harga acuan saat ini:
+            <strong class="text-accent">${market ? formatIdr(market.pricePerGram) + '/gram' : 'belum tersedia'}</strong>.
+          </div>`
+        : html`<div>
+            <label class="field-label" for="inv-principal">Nilai Investasi</label>
+            <input
+              id="inv-principal"
+              class="field-input font-mono tabular"
+              type="text"
+              inputmode="decimal"
+              placeholder="0"
+              .value=${form.principal}
+              aria-invalid=${errors.principal ? 'true' : 'false'}
+              aria-describedby="inv-principal-hint${errors.principal ? ' inv-principal-error' : ''}"
+              @input=${(event: Event) =>
+                app.setInvestmentField(
+                  'principal',
+                  (event.target as HTMLInputElement).value,
+                )}
+            />
+            ${fieldError('inv-principal-error', errors.principal)}
+            <p class="field-hint" id="inv-principal-hint">
+              Nilai yang Anda tanamkan, bukan nilai saat ini.
+            </p>
+          </div>`}
+
+      ${isStock
+        ? html`<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label class="field-label" for="inv-lots">Jumlah lot</label>
+              <input
+                id="inv-lots"
+                class="field-input font-mono tabular"
+                type="text"
+                inputmode="numeric"
+                placeholder="0"
+                .value=${form.lots}
+                aria-invalid=${errors.lots ? 'true' : 'false'}
+                aria-describedby="inv-lots-hint${errors.lots ? ' inv-lots-error' : ''}"
+                @input=${(event: Event) =>
+                  app.setInvestmentField(
+                    'lots',
+                    (event.target as HTMLInputElement).value,
+                  )}
+              />
+              ${fieldError('inv-lots-error', errors.lots)}
+              <p class="field-hint" id="inv-lots-hint">
+                1 lot = 100 lembar. Nilai saat ini = lot × 100 × harga per lembar.
+              </p>
+            </div>
+            <div>
+              <label class="field-label" for="inv-stock-price">
+                Harga saat ini / lembar
+              </label>
+              <input
+                id="inv-stock-price"
+                class="field-input font-mono tabular"
+                type="text"
+                inputmode="decimal"
+                placeholder="0"
+                .value=${form.stockCurrentPrice}
+                aria-invalid=${errors.stockCurrentPrice ? 'true' : 'false'}
+                aria-describedby=${errors.stockCurrentPrice ? 'inv-stock-price-error' : nothing}
+                @input=${(event: Event) =>
+                  app.setInvestmentField(
+                    'stockCurrentPrice',
+                    (event.target as HTMLInputElement).value,
+                  )}
+              />
+              ${fieldError('inv-stock-price-error', errors.stockCurrentPrice)}
+              <p class="field-hint">Opsional; kosongkan untuk memakai nilai investasi.</p>
+            </div>
+          </div>`
+        : nothing}
+
+      ${isFund
+        ? html`<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div>
+              <label class="field-label" for="inv-nib">NIB (nilai bersih)</label>
+              <input
+                id="inv-nib"
+                class="field-input font-mono tabular"
+                type="text"
+                inputmode="decimal"
+                placeholder="0"
+                .value=${form.nib}
+                aria-invalid=${errors.nib ? 'true' : 'false'}
+                aria-describedby=${errors.nib ? 'inv-nib-error' : nothing}
+                @input=${(event: Event) =>
+                  app.setInvestmentField(
+                    'nib',
+                    (event.target as HTMLInputElement).value,
+                  )}
+              />
+              ${fieldError('inv-nib-error', errors.nib)}
+            </div>
+            <div>
+              <label class="field-label" for="inv-nab">NAB / unit</label>
+              <input
+                id="inv-nab"
+                class="field-input font-mono tabular"
+                type="text"
+                inputmode="decimal"
+                placeholder="0"
+                .value=${form.nab}
+                aria-invalid=${errors.nab ? 'true' : 'false'}
+                aria-describedby=${errors.nab ? 'inv-nab-error' : nothing}
+                @input=${(event: Event) =>
+                  app.setInvestmentField(
+                    'nab',
+                    (event.target as HTMLInputElement).value,
+                  )}
+              />
+              ${fieldError('inv-nab-error', errors.nab)}
+            </div>
+            <div>
+              <label class="field-label" for="inv-units">Unit</label>
+              <input
+                id="inv-units"
+                class="field-input font-mono tabular"
+                type="text"
+                inputmode="decimal"
+                placeholder="0"
+                .value=${form.units}
+                aria-invalid=${errors.units ? 'true' : 'false'}
+                aria-describedby=${errors.units ? 'inv-units-error' : nothing}
+                @input=${(event: Event) =>
+                  app.setInvestmentField(
+                    'units',
+                    (event.target as HTMLInputElement).value,
+                  )}
+              />
+              ${fieldError('inv-units-error', errors.units)}
+            </div>
+          </div>
+          <p class="field-hint">
+            NIB = nilai investasi bersih dalam mata uang aset; NAB = nilai aktiva
+            bersih per unit. Isi NAB dan Unit bersama untuk menghitung nilai saat
+            ini; NIB dipakai lebih dulu jika diisi.
+          </p>`
+        : nothing}
+
+      ${isGold
+        ? html`<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div>
+              <label class="field-label" for="inv-gold-buy">Harga beli / gram</label>
+              <input
+                id="inv-gold-buy"
+                class="field-input font-mono tabular"
+                type="text"
+                inputmode="decimal"
+                placeholder="0"
+                .value=${form.goldBuyPricePerGram}
+                aria-invalid=${errors.goldBuyPricePerGram ? 'true' : 'false'}
+                aria-describedby=${errors.goldBuyPricePerGram ? 'inv-gold-buy-error' : nothing}
+                @input=${(event: Event) =>
+                  app.setInvestmentField(
+                    'goldBuyPricePerGram',
+                    (event.target as HTMLInputElement).value,
+                  )}
+              />
+              ${fieldError('inv-gold-buy-error', errors.goldBuyPricePerGram)}
+            </div>
+            <div>
+              <label class="field-label" for="inv-gold-grams">Gramasi</label>
+              <input
+                id="inv-gold-grams"
+                class="field-input font-mono tabular"
+                type="text"
+                inputmode="decimal"
+                placeholder="0"
+                .value=${form.goldGrams}
+                aria-invalid=${errors.goldGrams ? 'true' : 'false'}
+                aria-describedby=${errors.goldGrams ? 'inv-gold-grams-error' : nothing}
+                @input=${(event: Event) =>
+                  app.setInvestmentField(
+                    'goldGrams',
+                    (event.target as HTMLInputElement).value,
+                  )}
+              />
+              ${fieldError('inv-gold-grams-error', errors.goldGrams)}
+            </div>
+            <div>
+              <label class="field-label" for="inv-gold-current">
+                Harga saat ini / gram
+              </label>
+              <input
+                id="inv-gold-current"
+                class="field-input font-mono tabular"
+                type="text"
+                inputmode="decimal"
+                placeholder="Opsional"
+                .value=${form.goldCurrentPricePerGram}
+                aria-invalid=${errors.goldCurrentPricePerGram ? 'true' : 'false'}
+                aria-describedby=${errors.goldCurrentPricePerGram ? 'inv-gold-current-error' : nothing}
+                @input=${(event: Event) =>
+                  app.setInvestmentField(
+                    'goldCurrentPricePerGram',
+                    (event.target as HTMLInputElement).value,
+                  )}
+              />
+              ${fieldError('inv-gold-current-error', errors.goldCurrentPricePerGram)}
+              <p class="field-hint">Kosongkan untuk memakai harga acuan.</p>
+            </div>
+          </div>`
+        : nothing}
+
+      ${hasReturn
+        ? html`<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            ${hasTenor
+              ? html`<div>
+                  <label class="field-label" for="inv-tenor">Tenor (bulan)</label>
+                  <input
+                    id="inv-tenor"
+                    class="field-input font-mono tabular"
+                    type="text"
+                    inputmode="numeric"
+                    placeholder="12"
+                    .value=${form.tenorMonths}
+                    aria-invalid=${errors.tenorMonths ? 'true' : 'false'}
+                    aria-describedby=${errors.tenorMonths ? 'inv-tenor-error' : nothing}
+                    @input=${(event: Event) =>
+                      app.setInvestmentField(
+                        'tenorMonths',
+                        (event.target as HTMLInputElement).value,
+                      )}
+                  />
+                  ${fieldError('inv-tenor-error', errors.tenorMonths)}
+                </div>`
+              : nothing}
+            <div>
+              <label class="field-label" for="inv-rate">Bunga % p.a.</label>
+              <input
+                id="inv-rate"
+                class="field-input font-mono tabular"
+                type="text"
+                inputmode="decimal"
+                placeholder="6"
+                .value=${form.annualInterestRate}
+                aria-invalid=${errors.annualInterestRate ? 'true' : 'false'}
+                aria-describedby=${errors.annualInterestRate ? 'inv-rate-error' : nothing}
+                @input=${(event: Event) =>
+                  app.setInvestmentField(
+                    'annualInterestRate',
+                    (event.target as HTMLInputElement).value,
+                  )}
+              />
+              ${fieldError('inv-rate-error', errors.annualInterestRate)}
+            </div>
+            <div>
+              <label class="field-label" for="inv-cashback">Cashback</label>
+              <input
+                id="inv-cashback"
+                class="field-input font-mono tabular"
+                type="text"
+                inputmode="decimal"
+                placeholder="0"
+                .value=${form.cashback}
+                aria-invalid=${errors.cashback ? 'true' : 'false'}
+                aria-describedby=${errors.cashback ? 'inv-cashback-error' : nothing}
+                @input=${(event: Event) =>
+                  app.setInvestmentField(
+                    'cashback',
+                    (event.target as HTMLInputElement).value,
+                  )}
+              />
+              ${fieldError('inv-cashback-error', errors.cashback)}
+            </div>
+          </div>`
+        : nothing}
+
       <div>
         <label class="field-label" for="inv-currency">Mata uang</label>
         <input
@@ -376,7 +577,11 @@ function investmentModal(app: App): TemplateResult {
         class="btn btn-primary"
         ?disabled=${app.state.modalBusy}
       >
-        ${app.state.modalBusy ? 'Menyimpan…' : 'Tambah portofolio'}
+        ${app.state.modalBusy
+          ? 'Menyimpan…'
+          : editing
+            ? 'Simpan perubahan'
+            : 'Tambah investasi'}
       </button>`,
   });
 }
@@ -1098,6 +1303,40 @@ function settingsModal(app: App): TemplateResult {
           ? html`<p class="mt-2 text-sm text-danger" role="alert">${app.state.rateError}</p>`
           : nothing}
         ${currencyDatalist(app)}
+      </section>
+
+      <section class="border-t border-line pt-4" aria-labelledby="settings-gold">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h3 id="settings-gold" class="font-mono text-xs uppercase tracking-wider text-accent">
+            Harga emas acuan
+          </h3>
+          <button
+            type="button"
+            class="btn"
+            ?disabled=${app.state.goldPriceLoading}
+            @click=${() => void app.loadGoldPrice(true)}
+          >
+            ${icon('refresh', 'size-4')}
+            ${app.state.goldPriceLoading ? 'Memuat…' : 'Perbarui'}
+          </button>
+        </div>
+        ${app.state.goldPrice
+          ? html`<p class="mt-2 font-mono text-lg font-bold tabular text-ink">
+              ${formatIdr(app.state.goldPrice.pricePerGram)}<span class="ml-1 text-xs font-normal text-muted">/gram</span>
+            </p>
+            <p class="mt-1 text-[10px] leading-4 text-faint">
+              ${app.state.goldPrice.source} ·
+              ${formatDateTime(app.state.goldPrice.updatedAt)}
+              ${app.state.goldPrice.sourceType === 'spot' ? ' · harga spot, bukan retail ANTAM' : ''}
+            </p>`
+          : html`<p class="mt-2 text-xs leading-5 text-muted">
+              ${app.state.goldPriceError || 'Belum tersedia. Perbarui saat online.'}
+            </p>`}
+        <p class="mt-2 text-xs leading-5 text-faint">
+          Dipakai untuk aset emas yang tidak mengisi harga manual. Harga manual
+          per aset selalu menimpa harga acuan. Sumber: gold-api XAU/USD × kurs
+          USD/IDR, diperbarui oleh workflow harian.
+        </p>
       </section>
 
       <section class="border-t border-line pt-4" aria-labelledby="settings-data">

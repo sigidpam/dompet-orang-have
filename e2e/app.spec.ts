@@ -24,7 +24,7 @@ async function unlock(page: Page, pin = '123456'): Promise<void> {
 }
 
 async function addAccount(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Rekening', exact: true }).click();
+  await page.getByTestId('quick-add-account').click();
   await expect(
     page.getByRole('heading', { name: 'Tambah rekening' }),
   ).toBeVisible();
@@ -37,7 +37,7 @@ async function addAccount(page: Page): Promise<void> {
 }
 
 async function addTransaction(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Tambah transaksi' }).click();
+  await page.getByTestId('quick-add-transaction').click();
   await expect(
     page.getByRole('heading', { name: 'Tambah transaksi' }),
   ).toBeVisible();

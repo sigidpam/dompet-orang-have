@@ -15,6 +15,23 @@ export const INVESTMENT_CATEGORIES = [
   'Lainnya',
 ] as const;
 
+export type InvestmentCategory = (typeof INVESTMENT_CATEGORIES)[number];
+
+export const TENOR_CATEGORIES: readonly InvestmentCategory[] = [
+  'Deposito',
+  'Obligasi',
+];
+
+export const RETURN_CATEGORIES: readonly InvestmentCategory[] = [
+  'Deposito',
+  'Obligasi',
+  'P2P Lending',
+];
+
+export const STOCK_CATEGORY: InvestmentCategory = 'Saham';
+export const FUND_CATEGORY: InvestmentCategory = 'Reksa Dana';
+export const GOLD_CATEGORY: InvestmentCategory = 'Emas';
+
 export const CURATED_CURRENCIES = [
   'IDR',
   'USD',
@@ -59,6 +76,20 @@ export interface Investment {
   lots: number;
   currency: string;
   createdAt: string;
+  /** Reksa Dana: units held. */
+  units?: string;
+  /** Reksa Dana: NAB / NAV per unit. */
+  nab?: string;
+  /** Reksa Dana: NIB — net investment value in rupiah. */
+  nib?: string;
+  /** Saham: current price per share in the investment currency. */
+  stockCurrentPrice?: string;
+  /** Emas: grams held. */
+  goldGrams?: string;
+  /** Emas: purchase price per gram. */
+  goldBuyPricePerGram?: string;
+  /** Emas: manual current price per gram; overrides the market feed. */
+  goldCurrentPricePerGram?: string;
 }
 
 export type RateSource = 'manual' | 'frankfurter';
