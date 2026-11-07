@@ -148,6 +148,7 @@ test('category values, editing, net worth, and charts update', async ({
   await expect(
     page.getByRole('heading', { name: 'Ubah investasi' }),
   ).toBeVisible();
+  await expect(page.locator('#inv-category')).toHaveValue('Saham');
   await page.locator('#inv-stock-price').fill('2000');
   await page.getByRole('dialog').getByRole('button', { name: 'Simpan perubahan' }).click();
   await expect(
@@ -194,4 +195,91 @@ test('idx snapshot fetches a stock price and fills current value', async ({
   await expect(
     page.getByText('ihsg.midoriresearch.com', { exact: false }),
   ).toBeVisible();
+});
+
+test('same-name accounts and same stock code are grouped on the dashboard', async ({
+  page,
+}) => {
+  await setup(page);
+  await addAccount(page, '10000000');
+  await addAccount(page, '10000000');
+
+  const accountCard = page
+    .getByTestId('account-card')
+    .filter({ hasText: 'Bank Utama' });
+  await expect(accountCard).toContainText(
+    new Intl.NumberFormat('id-ID').format(20_000_000),
+  );
+  await expect(accountCard).toContainText('2 rekening');
+
+  const addStock = async (lots: string, price: string) => {
+    await openInvestment(page);
+    await page.locator('#inv-category').selectOption('Saham');
+    await page.locator('#inv-name').fill('BBCA');
+    await page.locator('#inv-stock-code').fill('BBCA');
+    await page.locator('#inv-lots').fill(lots);
+    await page.locator('#inv-stock-price').fill(price);
+    await page.locator('#inv-principal').fill(
+      String(Number(lots) * 100 * Number(price)),
+    );
+    await page
+      .getByRole('dialog')
+      .getByRole('button', { name: 'Tambah investasi', exact: true })
+      .click();
+    await expect(page.getByRole('dialog')).toBeHidden({ timeout: 15_000 });
+  };
+
+  await addStock('10', '1500');
+  await addStock('5', '2000');
+
+  const stockCard = page
+    .getByTestId('investment-card')
+    .filter({ hasText: 'BBCA' });
+  await expect(stockCard).toHaveCount(1);
+  await expect(
+    stockCard.getByTestId('investment-current-value'),
+  ).toContainText(new Intl.NumberFormat('id-ID').format(3_000_000));
+  await expect(stockCard).toContainText('Rincian 2 catatan');
+});
+
+test('buying and selling an investment moves cash and updates the holding', async ({
+  page,
+}) => {
+  await setup(page);
+  await addAccount(page, '10000000');
+
+  await page.getByTestId('quick-add-transaction').click();
+  await page.locator('#tx-type').selectOption('buy');
+  await expect(page.locator('#tx-investment-category')).toHaveValue('Saham');
+  await page.locator('#tx-stock-code').fill('BBCA');
+  await page.locator('#tx-quantity').fill('10');
+  await page.locator('#tx-unit-price').fill('1000');
+  await expect(page.getByTestId('trade-preview')).toContainText('1.000.000');
+  await page.getByRole('button', { name: 'Simpan transaksi' }).click();
+  await expect(page.getByRole('dialog')).toBeHidden({ timeout: 15_000 });
+
+  await expect(
+    page.getByTestId('account-card').filter({ hasText: 'Bank Utama' }),
+  ).toContainText(new Intl.NumberFormat('id-ID').format(9_000_000));
+  const stockCard = page
+    .getByTestId('investment-card')
+    .filter({ hasText: 'BBCA' });
+  await expect(stockCard.getByTestId('investment-current-value')).toContainText(
+    new Intl.NumberFormat('id-ID').format(1_000_000),
+  );
+
+  await page.getByTestId('quick-add-transaction').click();
+  await page.locator('#tx-type').selectOption('sell');
+  await page.locator('#tx-investment').selectOption({ index: 1 });
+  await page.locator('#tx-quantity').fill('5');
+  await page.getByRole('button', { name: 'Simpan transaksi' }).click();
+  await expect(page.getByRole('dialog')).toBeHidden({ timeout: 15_000 });
+
+  await expect(
+    page.getByTestId('account-card').filter({ hasText: 'Bank Utama' }),
+  ).toContainText(new Intl.NumberFormat('id-ID').format(9_500_000));
+  await expect(stockCard.getByTestId('investment-current-value')).toContainText(
+    new Intl.NumberFormat('id-ID').format(500_000),
+  );
+  await expect(stockCard).toContainText('5 lot');
 });

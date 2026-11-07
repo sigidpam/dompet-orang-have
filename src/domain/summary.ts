@@ -8,10 +8,26 @@ import {
   type Dataset,
   type ExchangeRate,
   type Investment,
+  type InvestmentCategory,
 } from './types';
+import {
+  accountGroupKey,
+  investmentGroupKey,
+  isDepletedInvestment,
+} from './investments';
 
 export interface AccountView extends Account {
   balanceIdr: Decimal | null;
+}
+
+export interface AccountGroupView {
+  key: string;
+  name: string;
+  type: Account['type'];
+  currency: string;
+  balance: Decimal;
+  balanceIdr: Decimal | null;
+  members: AccountView[];
 }
 
 export type ValueSource =
@@ -20,7 +36,8 @@ export type ValueSource =
   | 'nib'
   | 'units'
   | 'gold-override'
-  | 'gold-market';
+  | 'gold-market'
+  | 'mixed';
 
 export interface InvestmentView extends Investment {
   netPrincipal: Decimal;
@@ -34,6 +51,25 @@ export interface InvestmentView extends Investment {
   principalIdr: Decimal | null;
   cashbackIdr: Decimal | null;
   monthlyReturnIdr: Decimal | null;
+}
+
+export interface InvestmentGroupView {
+  key: string;
+  name: string;
+  category: InvestmentCategory;
+  stockCode?: string;
+  currency: string;
+  members: InvestmentView[];
+  currentValue: Decimal;
+  currentValueIdr: Decimal | null;
+  cost: Decimal;
+  costIdr: Decimal | null;
+  gainIdr: Decimal | null;
+  gainPct: Decimal | null;
+  lots: number;
+  units: Decimal;
+  grams: Decimal;
+  valueSource: ValueSource;
 }
 
 export interface AllocationSlice {
@@ -63,7 +99,9 @@ export interface Summary {
   unrealizedGainPct: Decimal | null;
   estMonthlyReturnIdr: Decimal;
   accounts: AccountView[];
+  accountGroups: AccountGroupView[];
   investments: InvestmentView[];
+  investmentGroups: InvestmentGroupView[];
   allocation: AllocationSlice[];
   monthlyCashflow: MonthlyCashflow[];
   missingRates: string[];
@@ -111,7 +149,10 @@ function currentValueOf(
     const price = investment.stockCurrentPrice
       ? toDecimal(investment.stockCurrentPrice)
       : null;
-    if (lots > 0 && price && price.gt(0)) {
+    if (lots <= 0) {
+      return { value: new Decimal(0), source: 'cost', missingRate: false };
+    }
+    if (price && price.gt(0)) {
       return {
         value: new Decimal(lots).times(100).times(price),
         source: 'stock',
@@ -135,6 +176,9 @@ function currentValueOf(
         missingRate: false,
       };
     }
+    if (units && units.lte(0)) {
+      return { value: new Decimal(0), source: 'cost', missingRate: false };
+    }
     return { value: principal, source: 'cost', missingRate: false };
   }
 
@@ -142,6 +186,9 @@ function currentValueOf(
     const grams = investment.goldGrams
       ? toDecimal(investment.goldGrams)
       : null;
+    if (grams && grams.lte(0)) {
+      return { value: new Decimal(0), source: 'cost', missingRate: false };
+    }
     if (grams && grams.gt(0)) {
       const override = investment.goldCurrentPricePerGram
         ? toDecimal(investment.goldCurrentPricePerGram)
@@ -214,6 +261,7 @@ export function computeSummary(
   let estMonthlyReturn = new Decimal(0);
 
   for (const tx of dataset.transactions) {
+    if (tx.type !== 'income' && tx.type !== 'expense') continue;
     const converted = convertToIdr(tx.amount, tx.currency, rates);
     if (converted === null) {
       missing.add(tx.currency);
@@ -239,6 +287,31 @@ export function computeSummary(
     }
     return { ...account, balanceIdr };
   });
+
+  const accountGroupsMap = new Map<string, AccountGroupView>();
+  for (const account of accounts) {
+    const key = accountGroupKey(account);
+    const group = accountGroupsMap.get(key);
+    if (!group) {
+      accountGroupsMap.set(key, {
+        key,
+        name: account.name,
+        type: account.type,
+        currency: account.currency,
+        balance: toDecimal(account.balance),
+        balanceIdr: account.balanceIdr,
+        members: [account],
+      });
+      continue;
+    }
+    group.balance = group.balance.plus(toDecimal(account.balance));
+    group.balanceIdr =
+      group.balanceIdr === null || account.balanceIdr === null
+        ? null
+        : group.balanceIdr.plus(account.balanceIdr);
+    group.members.push(account);
+  }
+  const accountGroups = [...accountGroupsMap.values()];
 
   let portfolioCurrent = new Decimal(0);
   let portfolioCost = new Decimal(0);
@@ -313,6 +386,72 @@ export function computeSummary(
     };
   });
 
+  const investmentGroupsMap = new Map<string, InvestmentGroupView>();
+  for (const investment of investments) {
+    if (isDepletedInvestment(investment)) continue;
+    const key = investmentGroupKey(investment);
+    const category = investment.category as InvestmentCategory;
+    let group = investmentGroupsMap.get(key);
+    if (!group) {
+      group = {
+        key,
+        name:
+          category === STOCK_CATEGORY
+            ? (investment.stockCode ?? investment.name)
+            : investment.name,
+        category,
+        ...(investment.stockCode ? { stockCode: investment.stockCode } : {}),
+        currency: investment.currency,
+        members: [],
+        currentValue: new Decimal(0),
+        currentValueIdr: new Decimal(0),
+        cost: new Decimal(0),
+        costIdr: new Decimal(0),
+        gainIdr: null,
+        gainPct: null,
+        lots: 0,
+        units: new Decimal(0),
+        grams: new Decimal(0),
+        valueSource: investment.valueSource,
+      };
+      investmentGroupsMap.set(key, group);
+    }
+    group.members.push(investment);
+    group.currentValue = group.currentValue.plus(investment.currentValue);
+    group.currentValueIdr =
+      group.currentValueIdr === null || investment.currentValueIdr === null
+        ? null
+        : group.currentValueIdr.plus(investment.currentValueIdr);
+    group.cost = group.cost.plus(investment.netPrincipal);
+    group.costIdr =
+      group.costIdr === null || investment.costIdr === null
+        ? null
+        : group.costIdr.plus(investment.costIdr);
+    group.lots += investment.lots;
+    if (investment.units) {
+      group.units = group.units.plus(toDecimal(investment.units));
+    }
+    if (investment.goldGrams) {
+      group.grams = group.grams.plus(toDecimal(investment.goldGrams));
+    }
+    if (group.valueSource !== investment.valueSource) {
+      group.valueSource = 'mixed';
+    }
+  }
+  const investmentGroups: InvestmentGroupView[] = [
+    ...investmentGroupsMap.values(),
+  ].map((group) => {
+    const gainIdr =
+      group.currentValueIdr !== null && group.costIdr !== null
+        ? group.currentValueIdr.minus(group.costIdr)
+        : null;
+    const gainPct =
+      gainIdr !== null && group.costIdr !== null && group.costIdr.gt(0)
+        ? gainIdr.div(group.costIdr).times(100)
+        : null;
+    return { ...group, gainIdr, gainPct };
+  });
+
   const allocationTotal = [...categoryTotals.values()].reduce(
     (sum, value) => sum.plus(value),
     new Decimal(0),
@@ -338,6 +477,7 @@ export function computeSummary(
     ]),
   );
   for (const tx of dataset.transactions) {
+    if (tx.type !== 'income' && tx.type !== 'expense') continue;
     const bucket = cashflowMap.get(tx.date.slice(0, 7));
     if (!bucket) continue;
     const converted = convertToIdr(tx.amount, tx.currency, rates);
@@ -378,7 +518,9 @@ export function computeSummary(
       : null,
     estMonthlyReturnIdr: estMonthlyReturn,
     accounts,
+    accountGroups,
     investments,
+    investmentGroups,
     allocation,
     monthlyCashflow,
     missingRates: [...missing].sort(),

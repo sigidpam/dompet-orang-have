@@ -1,7 +1,12 @@
 export const ACCOUNT_TYPES = ['bank', 'cash', 'e_wallet'] as const;
 export type AccountType = (typeof ACCOUNT_TYPES)[number];
 
-export const TRANSACTION_TYPES = ['income', 'expense'] as const;
+export const TRANSACTION_TYPES = [
+  'income',
+  'expense',
+  'buy',
+  'sell',
+] as const;
 export type TransactionType = (typeof TRANSACTION_TYPES)[number];
 
 export const INVESTMENT_CATEGORIES = [
@@ -56,6 +61,7 @@ export interface Account {
 
 export interface Transaction {
   id: string;
+  /** Cash account debited or credited by the transaction. */
   accountId: string;
   type: TransactionType;
   category: string;
@@ -63,6 +69,16 @@ export interface Transaction {
   currency: string;
   date: string;
   createdAt: string;
+  /** Buy/sell only: the investment record that changed. */
+  investmentId?: string;
+  /** Buy/sell only: denormalized label used after a holding is sold out. */
+  investmentLabel?: string;
+  /** Buy/sell only: investment category for display/CSV. */
+  investmentCategory?: string;
+  /** Buy/sell market assets: lots/units/grams exchanged. */
+  quantity?: string;
+  /** Buy/sell market assets: price per share/unit/gram. */
+  unitPrice?: string;
 }
 
 export interface Investment {
@@ -132,6 +148,8 @@ export const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
 export const TRANSACTION_TYPE_LABELS: Record<TransactionType, string> = {
   income: 'Pemasukan',
   expense: 'Pengeluaran',
+  buy: 'Beli investasi',
+  sell: 'Jual investasi',
 };
 
 export function emptyDataset(now = new Date()): Dataset {

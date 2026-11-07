@@ -26,16 +26,24 @@ import {
   type StockSnapshot,
 } from './domain/stockSnapshot';
 import {
+  decimalToString,
   formatDateTime,
   formatIdr,
   formatMoney,
   todayIso,
   ValidationError,
 } from './domain/money';
+import {
+  investmentQuantity,
+  investmentQuantityPlaces,
+  investmentUnitPrice,
+  isMarketPricedCategory,
+} from './domain/investments';
 import { currenciesInUse, fetchRatesFromFrankfurter } from './domain/rates';
 import { computeSummary, type Summary } from './domain/summary';
 import type { Dataset } from './domain/types';
 import {
+  GOLD_CATEGORY,
   RETURN_CATEGORIES,
   TENOR_CATEGORIES,
   type InvestmentCategory,
@@ -185,6 +193,12 @@ function defaultTransactionForm(accountId = ''): TransactionFormInput {
     category: '',
     amount: '',
     date: todayIso(),
+    investmentId: '',
+    investmentCategory: '',
+    investmentName: '',
+    stockCode: '',
+    quantity: '',
+    unitPrice: '',
   };
 }
 
@@ -1235,9 +1249,183 @@ export class App {
   setTransactionField<K extends keyof TransactionFormInput>(
     field: K,
     value: TransactionFormInput[K],
+    rerender = false,
   ): void {
     this.state.transactionForm[field] = value;
     delete this.state.transactionErrors[String(field)];
+    if (rerender) this.render();
+  }
+
+  setTransactionType(value: string): void {
+    const form = this.state.transactionForm;
+    form.type = value;
+    form.category = '';
+    form.amount = '';
+    form.investmentId = '';
+    form.investmentCategory = value === 'buy' ? 'Saham' : '';
+    form.investmentName = '';
+    form.stockCode = '';
+    form.quantity = '';
+    form.unitPrice = '';
+    this.state.transactionErrors = {};
+    this.state.stockLookupError = '';
+    this.render();
+  }
+
+  setTradeCategory(value: string): void {
+    const form = this.state.transactionForm;
+    form.investmentCategory = value;
+    form.investmentId = '';
+    form.investmentName = '';
+    form.stockCode = '';
+    form.quantity = '';
+    form.unitPrice = '';
+    form.amount = '';
+    this.state.transactionErrors = {};
+    this.state.stockLookupError = '';
+    this.render();
+  }
+
+  setTradeStockCode(value: string): void {
+    this.state.transactionForm.stockCode = value
+      .replace(/[^a-zA-Z]/g, '')
+      .toUpperCase()
+      .slice(0, 6);
+    this.state.transactionForm.unitPrice = '';
+    this.state.stockLookupError = '';
+    this.render();
+  }
+
+  setTransactionInvestment(investmentId: string): void {
+    const investment = this.state.dataset?.investments.find(
+      (candidate) => candidate.id === investmentId,
+    );
+    if (!investment) return;
+    const form = this.state.transactionForm;
+    form.investmentId = investment.id;
+    form.investmentCategory = investment.category;
+    form.investmentName = investment.name;
+    form.stockCode = investment.stockCode ?? '';
+    form.quantity = '';
+    form.unitPrice = '';
+    form.amount = '';
+    if (isMarketPricedCategory(investment.category)) {
+      const quantity = investmentQuantity(investment);
+      form.quantity = decimalToString(
+        quantity,
+        investmentQuantityPlaces(investment.category),
+      );
+      const price = investmentUnitPrice(investment);
+      if (price) {
+        form.unitPrice = decimalToString(price, 6);
+      } else if (
+        investment.category === GOLD_CATEGORY &&
+        this.state.goldPrice
+      ) {
+        form.unitPrice = this.state.goldPrice.pricePerGram;
+      }
+    } else {
+      form.amount = investment.principal;
+    }
+    this.state.transactionErrors = {};
+    this.render();
+  }
+
+  async refreshTradeStockPrice(): Promise<void> {
+    const form = this.state.transactionForm;
+    if (this.state.stockLookupLoading) return;
+    const code = (form.stockCode ?? '').trim().toUpperCase();
+    if (!/^[A-Z]{2,6}$/.test(code)) {
+      this.state.stockLookupError =
+        'Isi kode saham 2–6 huruf terlebih dahulu (contoh BBCA).';
+      this.render();
+      return;
+    }
+    const account = this.state.dataset?.accounts.find(
+      (candidate) => candidate.id === form.accountId,
+    );
+    if (account && account.currency !== 'IDR') {
+      this.state.stockLookupError =
+        'Harga snapshot dalam IDR. Gunakan rekening IDR atau isi harga manual.';
+      this.render();
+      return;
+    }
+    this.state.stockLookupLoading = true;
+    this.state.stockLookupError = '';
+    this.render();
+    try {
+      const snapshot = await fetchStockSnapshot();
+      if (!snapshot) {
+        this.state.stockLookupError =
+          'Snapshot harga saham belum tersedia. Coba saat online atau isi harga manual.';
+        return;
+      }
+      this.state.stockSnapshot = snapshot;
+      this.state.stockSnapshotError = '';
+      const quote = lookupStockQuote(snapshot, code);
+      if (!quote) {
+        this.state.stockLookupError =
+          `Kode ${code} tidak ada di snapshot. Perbarui snapshot atau isi harga manual.`;
+        return;
+      }
+      if (
+        this.state.modal !== 'transaction' ||
+        (this.state.transactionForm.stockCode ?? '').trim().toUpperCase() !==
+          code
+      ) {
+        return;
+      }
+      this.state.transactionForm.stockCode = quote.code;
+      this.state.transactionForm.unitPrice = quote.price;
+      this.notify(
+        `Harga ${quote.code}: ${formatMoney(quote.price, 'IDR')} (snapshot ${formatDateTime(snapshot.asOf)}).`,
+        'success',
+      );
+    } finally {
+      this.state.stockLookupLoading = false;
+      this.render();
+    }
+  }
+
+  fillTradeGoldPrice(): void {
+    const form = this.state.transactionForm;
+    const gold = this.state.goldPrice;
+    if (!gold) {
+      this.notify('Harga acuan emas belum tersedia.', 'info');
+      return;
+    }
+    const account = this.state.dataset?.accounts.find(
+      (candidate) => candidate.id === form.accountId,
+    );
+    if (account && account.currency !== 'IDR') {
+      this.notify(
+        'Harga acuan emas dalam IDR. Gunakan rekening IDR atau isi harga manual.',
+        'info',
+      );
+      return;
+    }
+    form.unitPrice = gold.pricePerGram;
+    this.state.transactionErrors = {};
+    this.render();
+  }
+
+  fillInvestmentGoldBuyPrice(): void {
+    const form = this.state.investmentForm;
+    const gold = this.state.goldPrice;
+    if (!gold) {
+      this.notify('Harga acuan emas belum tersedia.', 'info');
+      return;
+    }
+    if (form.currency !== 'IDR') {
+      this.notify(
+        'Harga acuan emas dalam IDR. Gunakan mata uang IDR atau isi manual.',
+        'info',
+      );
+      return;
+    }
+    form.goldBuyPricePerGram = gold.pricePerGram;
+    delete this.state.investmentErrors.goldBuyPricePerGram;
+    this.render();
   }
 
   setSettingsField(
@@ -1352,7 +1540,12 @@ export class App {
     this.state.transactionErrors = {};
     this.render();
     try {
-      await this.repository.addTransaction(this.state.transactionForm);
+      const form = this.state.transactionForm;
+      if (form.type === 'buy' || form.type === 'sell') {
+        await this.repository.addTrade(form);
+      } else {
+        await this.repository.addTransaction(form);
+      }
       this.finishModal('Transaksi disimpan.');
     } catch (error) {
       this.setFormError('transaction', error);

@@ -75,7 +75,9 @@ generated with `crypto.randomUUID()` where available.
 ```text
 Dataset (schemaVersion 2)
 ├── accounts[]      id, name, type, currency, balance, createdAt
-├── transactions[]  id, accountId, type, category, amount, currency, date, createdAt
+├── transactions[]  id, accountId, type, category, amount, currency, date, createdAt,
+│                   investmentId?, investmentLabel?, investmentCategory?,
+│                   quantity?, unitPrice?
 ├── investments[]   id, name, category, principal, cashback, rate, tenor, lots, currency,
 │                   units?, nab?, nib?, stockCode?, stockCurrentPrice?, goldGrams?,
 │                   goldBuyPricePerGram?, goldCurrentPricePerGram?
@@ -109,16 +111,29 @@ IDR where a rate exists. Missing rates are surfaced, never converted at 1.0.
 
 | Category | Cost basis | Current value |
 |---|---|---|
-| Saham | Nilai Investasi − cashback | lot × 100 × current price/share when provided; otherwise cost |
-| Reksa Dana | Nilai Investasi − cashback | NIB when provided; otherwise units × NAB; otherwise cost |
+| Saham | Harga beli / modal − cashback | lot × 100 × current price/share when provided; otherwise cost |
+| Reksa Dana | Harga beli / modal − cashback | NIB when provided; otherwise units × NAB; otherwise cost |
 | Emas | purchase price/gram × grams − cashback | grams × manual current price/gram, else grams × spot reference, else cost |
 | Deposito / Obligasi / P2P / Crypto / Lainnya | Nilai Investasi − cashback | cost basis (category-specific fields kept as metadata) |
 
+For market-priced categories (Saham, Reksa Dana, Emas), the dashboard’s
+“Nilai Investasi” is the current value, matching “Nilai Saat Ini”. The cost
+basis is retained for gain/loss and shown as “Harga beli (net)”. Saham records
+with the same code, and Reksa Dana/Emas records with the same name and currency,
+are grouped into one card while remaining separately editable. Same-name
+accounts with the same type and currency are grouped into one card with a summed
+balance.
+
+Buy/sell transactions select a cash account and an investment. Buying subtracts
+the cash amount and creates or increases the holding (lots, units, or grams);
+selling adds cash and reduces the holding. Trade cashflows are excluded from
+income/expense and the cashflow chart; they move value between cash and assets.
+
 The dashboard shows the net-worth hero, liquid/cash, portfolio current value,
-cost basis, estimated monthly return, unrealized gain, allocation (stacked bar,
-folded to six validated color slots) and a six-month cashflow bar chart. Charts
-are inline SVG with text labels in HTML, native hover titles, a legend, and a
-table fallback.
+cost basis (“Harga Beli / Modal”), estimated monthly return, unrealized gain,
+allocation (stacked bar, folded to six validated color slots) and a six-month
+cashflow bar chart. Charts are inline SVG with text labels in HTML, native hover
+titles, a legend, and a table fallback.
 
 ## Stock pipeline
 

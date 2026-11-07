@@ -33,8 +33,19 @@ This rebuild removes the server from the data path:
 - Category-aware investment editor: Saham lots + current price per share,
   Reksa Dana NIB + NAB + units, Emas purchase price/grams/current price, and
   tenor only for Deposito/Obligasi; edit an asset to refresh its current value
+- Market-priced holdings are grouped on the dashboard: Saham by code, Reksa Dana
+  and Emas by name. “Nilai Investasi” follows the current value for these
+  assets; the cost basis remains visible as “Harga beli”.
+- Same-name accounts with the same type and currency are combined into one
+  dashboard card with the summed balance; individual records stay available in
+  the card’s details.
+- Transactions can target an account or buy/sell an investment. A buy moves cash
+  out and adds lots/units/grams; a sell moves cash in and reduces the holding, so
+  asset fluctuations stay reflected in the dashboard. Account pickers are
+  grouped by Bank, Tunai, and E-Wallet.
 - Daily gold reference price from a scheduled GitHub Action, with a manual
-  per-asset override when you want the ANTAM retail price instead of spot
+  per-asset override when you want the ANTAM retail price instead of spot; the
+  gold form can prefill the purchase price from the reference with “Pakai acuan”
 - Daily full-universe IDX stock snapshot from `fzn0x/idx` (no API key); enter a
   Saham code, press “Ambil harga”, and lot × fetched price auto-calculates
   “Nilai Saat Ini”. Reksa Dana uses manual NAB × unit with a live preview
@@ -58,8 +69,8 @@ This rebuild removes the server from the data path:
 | Bandit (archived Python prototype) | 0 findings |
 | OWASP ZAP quick scan (DAST) | 0 High, 0 Medium, 0 Low; 3 informational |
 | Secret scan | 0 findings |
-| Unit/integration tests | 68 passing |
-| Browser E2E tests | 20 passing (desktop + mobile) |
+| Unit/integration tests | 73 passing |
+| Browser E2E tests | 24 passing (desktop + mobile) |
 
 See [SECURITY.md](SECURITY.md) and the full
 [security review](docs/SECURITY-REVIEW.md) for scope, residual risks, and the

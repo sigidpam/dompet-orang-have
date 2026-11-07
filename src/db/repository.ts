@@ -1,13 +1,30 @@
-import { Decimal, amountToString, toDecimal, ValidationError } from '../domain/money';
+import {
+  Decimal,
+  amountToString,
+  decimalToString,
+  toDecimal,
+  ValidationError,
+} from '../domain/money';
 import { newId } from '../domain/ids';
+import {
+  investmentGroupKey,
+  investmentLabel,
+  investmentMultiplier,
+  investmentQuantity,
+  investmentQuantityPlaces,
+  isMarketPricedCategory,
+} from '../domain/investments';
 import type { RateFetchResult } from '../domain/rates';
-import type {
-  Account,
-  Dataset,
-  ExchangeRate,
-  Investment,
-  Settings,
-  Transaction,
+import {
+  FUND_CATEGORY,
+  GOLD_CATEGORY,
+  STOCK_CATEGORY,
+  type Account,
+  type Dataset,
+  type ExchangeRate,
+  type Investment,
+  type Settings,
+  type Transaction,
 } from '../domain/types';
 import { emptyDataset } from '../domain/types';
 import {
@@ -20,9 +37,11 @@ import {
   normalizeInvestmentInput,
   normalizeRateInput,
   normalizeSettingsInput,
+  normalizeTradeInput,
   normalizeTransactionInput,
   type AccountFormInput,
   type InvestmentFormInput,
+  type NormalizedTradeInput,
   type TransactionFormInput,
 } from '../domain/validation';
 import {
@@ -76,6 +95,111 @@ function investmentFromNormalized(
       ? { goldCurrentPricePerGram: normalized.goldCurrentPricePerGram }
       : {}),
   };
+}
+
+function investmentFromTrade(
+  id: string,
+  createdAt: string,
+  trade: NormalizedTradeInput,
+  amount: Decimal,
+  currency: string,
+): Investment {
+  const quantity = trade.quantity ? toDecimal(trade.quantity) : null;
+  const unitPrice = trade.unitPrice ? toDecimal(trade.unitPrice) : null;
+  const investment: Investment = {
+    id,
+    createdAt,
+    name: trade.name ?? trade.stockCode ?? trade.category,
+    category: trade.category,
+    principal: amountToString(amount),
+    cashback: '0',
+    annualInterestRate: '0',
+    tenorMonths: 0,
+    lots: 0,
+    currency,
+  };
+  if (trade.category === STOCK_CATEGORY) {
+    investment.lots = quantity?.toNumber() ?? 0;
+    if (trade.stockCode) investment.stockCode = trade.stockCode;
+    if (unitPrice) {
+      investment.stockCurrentPrice = decimalToString(unitPrice, 6);
+    }
+  } else if (trade.category === FUND_CATEGORY) {
+    if (quantity) investment.units = decimalToString(quantity, 6);
+    if (unitPrice) investment.nab = decimalToString(unitPrice, 6);
+  } else if (trade.category === GOLD_CATEGORY) {
+    if (quantity) investment.goldGrams = decimalToString(quantity, 4);
+    if (unitPrice) {
+      investment.goldBuyPricePerGram = decimalToString(unitPrice, 6);
+    }
+  }
+  return investment;
+}
+
+function reduceMarketHolding(
+  investment: Investment,
+  quantity: Decimal,
+  unitPrice: Decimal,
+): void {
+  const before = investmentQuantity(investment);
+  const remaining = before.minus(quantity);
+  const principal = toDecimal(investment.principal);
+  const cashback = toDecimal(investment.cashback);
+  investment.principal = amountToString(
+    before.gt(0) ? principal.times(remaining).div(before) : new Decimal(0),
+  );
+  investment.cashback = amountToString(
+    before.gt(0) ? cashback.times(remaining).div(before) : new Decimal(0),
+  );
+
+  if (investment.category === STOCK_CATEGORY) {
+    investment.lots = remaining.toNumber();
+    investment.stockCurrentPrice = decimalToString(unitPrice, 6);
+  } else if (investment.category === FUND_CATEGORY) {
+    investment.units = decimalToString(remaining, 6);
+    investment.nab = decimalToString(unitPrice, 6);
+    if (investment.nib !== undefined) {
+      if (remaining.gt(0)) {
+        investment.nib = amountToString(remaining.times(unitPrice));
+      } else {
+        delete investment.nib;
+      }
+    }
+  } else if (investment.category === GOLD_CATEGORY) {
+    investment.goldGrams = decimalToString(remaining, 4);
+    if (remaining.gt(0)) {
+      investment.goldBuyPricePerGram = amountToString(
+        toDecimal(investment.principal).div(remaining),
+      );
+    }
+  }
+}
+
+
+/** A grouped holding has one current quote/NAB; keep its records in sync. */
+function propagateMarketPrice(
+  draft: Dataset,
+  investment: Investment,
+): void {
+  if (!isMarketPricedCategory(investment.category)) return;
+  const key = investmentGroupKey(investment);
+  for (const other of draft.investments) {
+    if (other.id === investment.id) continue;
+    if (investmentGroupKey(other) !== key) continue;
+    if (
+      investment.category === STOCK_CATEGORY &&
+      investment.stockCurrentPrice
+    ) {
+      other.stockCurrentPrice = investment.stockCurrentPrice;
+    } else if (investment.category === FUND_CATEGORY && investment.nab) {
+      other.nab = investment.nab;
+    } else if (
+      investment.category === GOLD_CATEGORY &&
+      investment.goldCurrentPricePerGram !== undefined
+    ) {
+      other.goldCurrentPricePerGram = investment.goldCurrentPricePerGram;
+    }
+  }
 }
 
 export class Repository {
@@ -214,6 +338,166 @@ export class Repository {
     return { ...created };
   }
 
+  async addTrade(input: TransactionFormInput): Promise<Transaction> {
+    const trade = normalizeTradeInput(input);
+    const created = await this.mutate((draft) => {
+      ensureCapacity(draft.transactions.length, MAX_TRANSACTIONS, 'transaksi');
+      const account = draft.accounts.find(
+        (candidate) => candidate.id === trade.accountId,
+      );
+      if (!account) {
+        throw new ValidationError('Rekening tidak ditemukan.', 'accountId');
+      }
+
+      const isBuy = trade.type === 'buy';
+      const market = isMarketPricedCategory(trade.category);
+      const multiplier = investmentMultiplier(trade.category);
+      let investment: Investment;
+      let amount: Decimal;
+      let quantity: Decimal | null = null;
+      let unitPrice: Decimal | null = null;
+
+      if (isBuy) {
+        if (market) {
+          quantity = toDecimal(trade.quantity ?? '0');
+          unitPrice = toDecimal(trade.unitPrice ?? '0');
+          amount = quantity
+            .times(multiplier)
+            .times(unitPrice)
+            .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+          if (!quantity.gt(0) || !unitPrice.gt(0) || !amount.gt(0)) {
+            throw new ValidationError(
+              'Kuantitas dan harga investasi harus lebih besar dari 0.',
+              'quantity',
+            );
+          }
+        } else {
+          amount = toDecimal(trade.amount ?? '0');
+          if (!amount.gt(0)) {
+            throw new ValidationError(
+              'Jumlah investasi harus lebih besar dari 0.',
+              'amount',
+            );
+          }
+        }
+        ensureCapacity(draft.investments.length, MAX_INVESTMENTS, 'investasi');
+        investment = investmentFromTrade(
+          newId('inv'),
+          new Date().toISOString(),
+          trade,
+          amount,
+          account.currency,
+        );
+        draft.investments.push(investment);
+        propagateMarketPrice(draft, investment);
+      } else {
+        const existing = draft.investments.find(
+          (candidate) => candidate.id === trade.investmentId,
+        );
+        if (!existing) {
+          throw new ValidationError('Investasi tidak ditemukan.', 'investmentId');
+        }
+        if (existing.category !== trade.category) {
+          throw new ValidationError(
+            'Kategori investasi tidak cocok dengan aset yang dipilih.',
+            'investmentId',
+          );
+        }
+        if (existing.currency !== account.currency) {
+          throw new ValidationError(
+            'Mata uang aset dan rekening harus sama.',
+            'accountId',
+          );
+        }
+        investment = existing;
+        if (market) {
+          quantity = toDecimal(trade.quantity ?? '0');
+          unitPrice = toDecimal(trade.unitPrice ?? '0');
+          const available = investmentQuantity(existing);
+          if (!quantity.gt(0)) {
+            throw new ValidationError(
+              'Jumlah yang dijual harus lebih besar dari 0.',
+              'quantity',
+            );
+          }
+          if (quantity.gt(available)) {
+            throw new ValidationError(
+              `Jumlah melebihi kepemilikan (${available.toString()}).`,
+              'quantity',
+            );
+          }
+          amount = quantity
+            .times(multiplier)
+            .times(unitPrice)
+            .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+          if (!amount.gt(0)) {
+            throw new ValidationError(
+              'Nilai penjualan harus lebih besar dari 0.',
+              'quantity',
+            );
+          }
+          reduceMarketHolding(existing, quantity, unitPrice);
+          propagateMarketPrice(draft, existing);
+        } else {
+          const principal = toDecimal(existing.principal);
+          amount = toDecimal(trade.amount ?? '0');
+          if (!amount.gt(0)) {
+            throw new ValidationError(
+              'Jumlah penarikan harus lebih besar dari 0.',
+              'amount',
+            );
+          }
+          if (amount.gt(principal)) {
+            throw new ValidationError(
+              'Jumlah melebihi nilai investasi.',
+              'amount',
+            );
+          }
+          existing.principal = amountToString(principal.minus(amount));
+          const cashback = toDecimal(existing.cashback);
+          if (cashback.gt(0)) {
+            existing.cashback = amountToString(
+              principal.gt(0)
+                ? cashback.times(principal.minus(amount)).div(principal)
+                : new Decimal(0),
+            );
+          }
+        }
+      }
+
+      const balance = new Decimal(account.balance);
+      account.balance = amountToString(
+        isBuy ? balance.minus(amount) : balance.plus(amount),
+      );
+
+      const transaction: Transaction = {
+        id: newId('tx'),
+        accountId: account.id,
+        type: trade.type,
+        category: trade.category,
+        amount: amountToString(amount),
+        currency: account.currency,
+        date: trade.date,
+        createdAt: new Date().toISOString(),
+        investmentId: investment.id,
+        investmentLabel: investmentLabel(investment),
+        investmentCategory: investment.category,
+        ...(quantity
+          ? {
+              quantity: decimalToString(
+                quantity,
+                investmentQuantityPlaces(trade.category),
+              ),
+            }
+          : {}),
+        ...(unitPrice ? { unitPrice: decimalToString(unitPrice, 6) } : {}),
+      };
+      draft.transactions.push(transaction);
+      return transaction;
+    });
+    return { ...created };
+  }
+
   async deleteTransaction(transactionId: string): Promise<void> {
     await this.mutate((draft) => {
       const index = draft.transactions.findIndex(
@@ -225,6 +509,12 @@ export class Repository {
       const transaction = draft.transactions[index];
       if (!transaction) {
         throw new ValidationError('Transaksi tidak ditemukan.', 'transaction');
+      }
+      if (transaction.type === 'buy' || transaction.type === 'sell') {
+        throw new ValidationError(
+          'Transaksi beli/jual tidak dapat dihapus. Catat transaksi sebaliknya.',
+          'transaction',
+        );
       }
       const account = draft.accounts.find(
         (candidate) => candidate.id === transaction.accountId,
@@ -252,6 +542,7 @@ export class Repository {
     await this.mutate((draft) => {
       ensureCapacity(draft.investments.length, MAX_INVESTMENTS, 'investasi');
       draft.investments.push(investment);
+      propagateMarketPrice(draft, investment);
     });
     return { ...investment };
   }
@@ -278,6 +569,7 @@ export class Repository {
         normalized,
       );
       draft.investments.splice(index, 1, next);
+      propagateMarketPrice(draft, next);
       return next;
     });
     return { ...updated };
@@ -290,6 +582,15 @@ export class Repository {
       );
       if (index < 0) {
         throw new ValidationError('Investasi tidak ditemukan.', 'investment');
+      }
+      const used = draft.transactions.some(
+        (transaction) => transaction.investmentId === investmentId,
+      );
+      if (used) {
+        throw new ValidationError(
+          'Investasi memiliki transaksi beli/jual. Catat transaksi sebaliknya; riwayat transaksi tidak dapat dihapus.',
+          'investment',
+        );
       }
       draft.investments.splice(index, 1);
     });

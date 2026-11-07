@@ -37,9 +37,9 @@ tests. It is a best-effort review, not a formal third-party audit.
 | Bandit (archived Python) | **0 findings** |
 | OWASP ZAP | **0 High, 0 Medium, 0 Low**, 3 informational |
 | Secret scan | **0 findings** |
-| Unit/integration tests | 68 passed |
-| Browser E2E | 20 passed (desktop + Pixel 7) |
-| Coverage | 84.60% lines, 75.88% branches, 83.24% functions |
+| Unit/integration tests | 73 passed |
+| Browser E2E | 24 passed (desktop + Pixel 7) |
+| Coverage | 83.84% lines, 75.73% branches, 85.25% functions |
 
 ## Findings and resolutions
 
@@ -248,6 +248,10 @@ all are fixed and the key paths have regression tests:
 - Category valuations (Saham lots × price, Reksa Dana NIB/NAB/units, Emas
   grams × price) are validated numerically and rendered as text; no new HTML
   sink was introduced.
+- Grouped account/holding cards are display-only; every underlying record remains
+  validated. Buy/sell trades recompute cash and quantity with decimal
+  arithmetic, reject overselling, and require an opposite trade instead of a
+  delete that could desynchronize cash and holdings.
 - Stock quotes come from a same-origin daily snapshot of the public `fzn0x/idx`
   quote board. The updater validates the universe size, quote count, symbol
   format, and price bounds before writing; the client validates again before use.
