@@ -4,7 +4,7 @@
  * Fails the build when a high-confidence credential pattern is found.
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync, statSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
 import { extname } from 'node:path';
 
 const SKIP_EXTENSIONS = new Set([
@@ -74,17 +74,31 @@ function trackedFiles() {
 }
 
 const findings = [];
+const MAX_FILE_BYTES = 2 * 1024 * 1024;
 for (const file of trackedFiles()) {
   const extension = extname(file).toLowerCase();
   if (SKIP_EXTENSIONS.has(extension) || SKIP_FILES.has(file)) continue;
-  let stats;
+
+  let content = '';
+  let fd = null;
   try {
-    stats = statSync(file);
+    fd = openSync(file, 'r');
+    const stats = fstatSync(fd);
+    if (!stats.isFile() || stats.size > MAX_FILE_BYTES) continue;
+    const buffer = Buffer.alloc(stats.size);
+    const bytesRead = readSync(fd, buffer, 0, stats.size, 0);
+    content = buffer.subarray(0, bytesRead).toString('utf8');
   } catch {
     continue;
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {
+        // Ignore cleanup errors.
+      }
+    }
   }
-  if (!stats.isFile() || stats.size > 2 * 1024 * 1024) continue;
-  const content = readFileSync(file, 'utf8');
   if (content.includes('\0')) continue;
   const lines = content.split(/\r?\n/);
   for (const [lineIndex, line] of lines.entries()) {
