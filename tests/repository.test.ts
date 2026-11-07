@@ -196,4 +196,30 @@ describe('repository', () => {
     expect(repo.snapshot().accounts[0]?.balance).toBe('0.3');
     lockSession(session);
   });
+
+  it('does not lose writes made through another repository instance', async () => {
+    const session = await createVault('123456', { iterations: 1_000 });
+    const store = createVaultStore(`test-${crypto.randomUUID()}`);
+    const repoA = await Repository.open(session, store);
+    const repoB = await Repository.open(session, store);
+    const account = await repoA.addAccount({
+      name: 'Shared',
+      type: 'bank',
+      currency: 'IDR',
+      balance: '1000',
+    });
+    // repoB still holds the pre-account snapshot; the write must reload first.
+    await repoB.addTransaction({
+      accountId: account.id,
+      type: 'expense',
+      category: 'Makan',
+      amount: '100',
+      date: '2026-11-07',
+    });
+    const verify = await Repository.open(session, store);
+    expect(verify.snapshot().accounts).toHaveLength(1);
+    expect(verify.snapshot().transactions).toHaveLength(1);
+    expect(verify.snapshot().accounts[0]?.balance).toBe('900');
+    lockSession(session);
+  });
 });

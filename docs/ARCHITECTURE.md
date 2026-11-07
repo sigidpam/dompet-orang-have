@@ -106,6 +106,8 @@ plaintext out of IndexedDB.
 | Missing FX rate = warning, not 1.0 | Silent 1.0 conversion produces plausible but wrong totals. |
 | Encrypted backups with a separate passphrase | A backup can be stored off-device without exposing the PIN or recovery code. |
 | CSV formula neutralization | Imported names can be attacker-controlled; spreadsheets execute formulas. |
+| Web Locks around mutations | Prevents two tabs from overwriting each other with stale whole-dataset snapshots. |
+| Copy the master key before PIN-change await | A racing lock or auto-lock zeroes the session buffer; wrapping a zeroed key would lose the data key. |
 
 ## Repository map
 

@@ -316,7 +316,10 @@ export class App {
     }
     if (this.state.screen === 'unlocked' && this.session) {
       const minutes = this.state.dataset?.settings.autoLockMinutes ?? 5;
-      if (Date.now() - this.lastActivity > minutes * 60_000) {
+      if (
+        !this.state.modalBusy &&
+        Date.now() - this.lastActivity > minutes * 60_000
+      ) {
         this.lockNow();
       }
     }
@@ -1202,6 +1205,7 @@ export class App {
     }
 
     this.state.modalBusy = true;
+    this.lastActivity = Date.now();
     form.error = '';
     this.render();
     try {

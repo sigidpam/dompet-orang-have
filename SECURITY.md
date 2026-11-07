@@ -86,7 +86,8 @@ soon as possible.
 - Input validation and length bounds; exact decimal money parsing
 - CSV formula-injection neutralization
 - PWA service worker precaches the app shell only; no financial responses are cached
-- Cross-tab lock/change broadcasts; no sensitive data in analytics or logs
+- Cross-tab lock/change broadcasts and Web Locks-serialized writes; no sensitive data in analytics or logs
+- PIN change copies the master key before PBKDF2 awaiting, preventing a racing lock from wrapping a zeroed key
 
 ## Verification
 

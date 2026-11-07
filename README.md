@@ -34,7 +34,7 @@ This rebuild removes the server from the data path:
   Web Share, and clipboard fallback
 - Installable PWA with offline app shell, update prompt, and local maskable icons
 - Strict CSP (no third-party scripts/fonts), frame-buster, no `innerHTML` for
-  user data, and cross-tab lock/change notifications
+  user data, and cross-tab lock/change notifications, and serialized cross-tab writes
 - Cross-browser test coverage: Chromium desktop and Pixel 7 emulation, including
   offline reload and recovery
 
@@ -47,7 +47,7 @@ This rebuild removes the server from the data path:
 | Bandit (archived Python prototype) | 0 findings |
 | OWASP ZAP quick scan (DAST) | 0 High, 0 Medium, 0 Low; 3 informational |
 | Secret scan | 0 findings |
-| Unit/integration tests | 43 passing |
+| Unit/integration tests | 46 passing |
 | Browser E2E tests | 10 passing (desktop + mobile) |
 
 See [SECURITY.md](SECURITY.md) and the full

@@ -11,6 +11,10 @@ import type {
 } from '../domain/types';
 import { emptyDataset } from '../domain/types';
 import {
+  MAX_ACCOUNTS,
+  MAX_INVESTMENTS,
+  MAX_RATES,
+  MAX_TRANSACTIONS,
   assertDataset,
   normalizeAccountInput,
   normalizeInvestmentInput,
@@ -27,6 +31,19 @@ import {
   type VaultSession,
 } from '../crypto/vault';
 import { vaultStore, type VaultStore } from './store';
+
+function ensureCapacity(
+  current: number,
+  max: number,
+  label: string,
+): void {
+  if (current >= max) {
+    throw new ValidationError(
+      `Batas ${label} tercapai (${max}). Hapus data lama terlebih dahulu.`,
+      'form',
+    );
+  }
+}
 
 export class Repository {
   private data: Dataset;
@@ -66,11 +83,34 @@ export class Repository {
     this.data = next;
   }
 
+  private async withWriteLock<T>(task: () => Promise<T>): Promise<T> {
+    const locks =
+      typeof navigator !== 'undefined' ? navigator.locks : undefined;
+    if (locks?.request) {
+      return locks.request(
+        'dompet-orang-have-write',
+        { mode: 'exclusive' },
+        () => task(),
+      );
+    }
+    return task();
+  }
+
+  private async loadLatest(): Promise<Dataset> {
+    const payload = await this.store.load();
+    if (!payload) return emptyDataset();
+    return decryptDataset(this.session, payload, assertDataset);
+  }
+
   private async mutate<T>(mutator: (draft: Dataset) => T): Promise<T> {
-    const draft = structuredClone(this.data);
-    const result = mutator(draft);
-    await this.persist(draft);
-    return result;
+    // Reload inside an exclusive cross-tab lock so concurrent writes cannot
+    // overwrite each other with a stale snapshot.
+    return this.withWriteLock(async () => {
+      const draft = structuredClone(await this.loadLatest());
+      const result = mutator(draft);
+      await this.persist(draft);
+      return result;
+    });
   }
 
   async addAccount(input: AccountFormInput): Promise<Account> {
@@ -81,6 +121,7 @@ export class Repository {
       createdAt: new Date().toISOString(),
     };
     await this.mutate((draft) => {
+      ensureCapacity(draft.accounts.length, MAX_ACCOUNTS, 'rekening');
       draft.accounts.push(account);
     });
     return { ...account };
@@ -110,6 +151,7 @@ export class Repository {
   async addTransaction(input: TransactionFormInput): Promise<Transaction> {
     const normalized = normalizeTransactionInput(input);
     const created = await this.mutate((draft) => {
+      ensureCapacity(draft.transactions.length, MAX_TRANSACTIONS, 'transaksi');
       const account = draft.accounts.find(
         (candidate) => candidate.id === normalized.accountId,
       );
@@ -175,6 +217,7 @@ export class Repository {
       createdAt: new Date().toISOString(),
     };
     await this.mutate((draft) => {
+      ensureCapacity(draft.investments.length, MAX_INVESTMENTS, 'investasi');
       draft.investments.push(investment);
     });
     return { ...investment };
@@ -207,6 +250,7 @@ export class Repository {
       if (index >= 0) {
         draft.rates.splice(index, 1, rate);
       } else {
+        ensureCapacity(draft.rates.length, MAX_RATES, 'kurs');
         draft.rates.push(rate);
       }
     });
@@ -264,8 +308,10 @@ export class Repository {
 
   async replaceDataset(input: unknown): Promise<Dataset> {
     const dataset = assertDataset(input);
-    await this.persist(dataset);
-    return structuredClone(dataset);
+    return this.withWriteLock(async () => {
+      await this.persist(structuredClone(dataset));
+      return structuredClone(dataset);
+    });
   }
 
   exportDataset(): Dataset {

@@ -26,6 +26,10 @@ import {
 const NAME_MAX = 80;
 const CATEGORY_MAX = 60;
 const ID_MAX = 100;
+export const MAX_ACCOUNTS = 1_000;
+export const MAX_TRANSACTIONS = 100_000;
+export const MAX_INVESTMENTS = 10_000;
+export const MAX_RATES = 500;
 const CURRENCY_RE = /^[A-Z]{3}$/;
 // eslint-disable-next-line security/detect-unsafe-regex -- anchored, bounded decimal grammar
 const DECIMAL_RE = /^-?\d+(\.\d{1,2})?$/;
@@ -317,10 +321,10 @@ export function assertDataset(value: unknown): Dataset {
   ) {
     throw new ValidationError('Struktur data tidak lengkap.', 'dataset');
   }
-  assertArrayLength(accountsRaw, 1_000, 'accounts');
-  assertArrayLength(transactionsRaw, 100_000, 'transactions');
-  assertArrayLength(investmentsRaw, 10_000, 'investments');
-  assertArrayLength(ratesRaw, 500, 'rates');
+  assertArrayLength(accountsRaw, MAX_ACCOUNTS, 'accounts');
+  assertArrayLength(transactionsRaw, MAX_TRANSACTIONS, 'transactions');
+  assertArrayLength(investmentsRaw, MAX_INVESTMENTS, 'investments');
+  assertArrayLength(ratesRaw, MAX_RATES, 'rates');
 
   const accountIds = new Set<string>();
   const accounts: Account[] = accountsRaw.map((item) => {

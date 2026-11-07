@@ -462,25 +462,36 @@ export async function changePin(
   if (!envelope) {
     throw new VaultError('Vault belum dibuat di perangkat ini.', 'no-vault');
   }
-  const iterations = options.iterations ?? envelope.iterations;
-  assertIterations(iterations);
-  const salt = randomBytes(SALT_BYTES);
-  const kek = await deriveKek(newPin, salt, iterations);
-  const wrapped = await encryptBytes(
-    kek,
-    session.rawKey,
-    wrapAad(iterations),
-  );
-  const updated: VaultEnvelope = {
-    ...envelope,
-    iterations,
-    salt: bytesToBase64Url(salt),
-    iv: wrapped.iv,
-    wrappedKey: wrapped.ct,
-  };
-  saveEnvelope(updated);
-  clearAttempts();
-  return updated;
+  // Copy the key before any await. A cross-tab lock or auto-lock can zero the
+  // session buffer while PBKDF2 is running; wrapping a zeroed key would destroy
+  // the only copy of the master key.
+  const rawKey = Uint8Array.from(session.rawKey);
+  if (rawKey.length !== KEY_BYTES || rawKey.every((byte) => byte === 0)) {
+    rawKey.fill(0);
+    throw new VaultError(
+      'Sesi sudah terkunci. Buka vault kembali lalu ubah PIN.',
+      'no-vault',
+    );
+  }
+  try {
+    const iterations = options.iterations ?? envelope.iterations;
+    assertIterations(iterations);
+    const salt = randomBytes(SALT_BYTES);
+    const kek = await deriveKek(newPin, salt, iterations);
+    const wrapped = await encryptBytes(kek, rawKey, wrapAad(iterations));
+    const updated: VaultEnvelope = {
+      ...envelope,
+      iterations,
+      salt: bytesToBase64Url(salt),
+      iv: wrapped.iv,
+      wrappedKey: wrapped.ct,
+    };
+    saveEnvelope(updated);
+    clearAttempts();
+    return updated;
+  } finally {
+    rawKey.fill(0);
+  }
 }
 
 export function getRecoveryCode(session: VaultSession): string {

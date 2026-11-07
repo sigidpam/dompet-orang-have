@@ -35,9 +35,9 @@ tests. It is a best-effort review, not a formal third-party audit.
 | Bandit (archived Python) | **0 findings** |
 | OWASP ZAP | **0 High, 0 Medium, 0 Low**, 3 informational |
 | Secret scan | **0 findings** |
-| Unit/integration tests | 43 passed |
+| Unit/integration tests | 46 passed |
 | Browser E2E | 10 passed (desktop + Pixel 7) |
-| Coverage | 80.15% lines, 67.51% branches, 80.92% functions |
+| Coverage | 81.36% lines, 69.81% branches, 81.76% functions |
 
 ## Findings and resolutions
 
@@ -155,6 +155,41 @@ biometrics/passcode, and treat the device lock as the primary boundary.
   `from`). No source comments or credentials are exposed.
 - **Modern Web Application** — a `<noscript>` notice; no action.
 
+### F11 — Cross-tab lost updates (Medium, fixed)
+
+Each tab kept an in-memory dataset snapshot and persisted the whole dataset on
+every write. Two tabs writing near-simultaneously could overwrite each other's
+changes (last-writer-wins).
+
+**Resolution:** every mutation now runs inside an exclusive Web Locks critical
+section (`dompet-orang-have-write`), reloads and decrypts the latest ciphertext
+from IndexedDB, applies the change, and persists. Browsers without Web Locks fall
+back to reload-before-write. A regression test uses two repository instances
+sharing one store and verifies the second write sees the first.
+
+### F12 — PIN-change key zeroization race (High, fixed)
+
+`changePin()` awaited PBKDF2 before reading the session's raw master key. A
+concurrent lock (auto-lock or another tab's lock broadcast) zeroes that buffer,
+so the function could wrap 32 zero bytes and overwrite the only PIN-wrapped copy
+of the master key.
+
+**Resolution:** `changePin()` validates and copies the key before any `await`,
+wraps the copy, zeroes it in `finally`, and refuses an already-zeroed session.
+Auto-lock also pauses while a modal operation is in flight. A regression test
+zeroes the live session while PIN change is running and verifies the data key is
+preserved.
+
+### F13 — Mutation paths missed dataset caps (Medium, fixed)
+
+Collection caps were enforced when loading/importing a dataset, but repository
+add methods did not enforce them. A user could add enough records that the next
+unlock failed validation and could no longer read the vault.
+
+**Resolution:** shared `MAX_ACCOUNTS`, `MAX_TRANSACTIONS`, `MAX_INVESTMENTS`,
+and `MAX_RATES` limits are now enforced on every write inside the repository,
+matching the import/load validator. A cap regression test covers imports.
+
 ## Positive controls verified
 
 - AES-256-GCM encryption at rest; ciphertext-only IndexedDB; no plaintext in
@@ -171,6 +206,7 @@ biometrics/passcode, and treat the device lock as the primary boundary.
   verified via browser tests.
 - Opt-in FX sync only reaches the CSP-allowlisted origin and updates IDR totals;
   the browser test intercepts the response and verifies the displayed rate.
+- Cross-tab writes are serialized with Web Locks; PIN change copies the master key before any await so a racing lock cannot zero it.
 - Production dependency audit is clean; Actions are pinned to commit SHAs;
   Dependabot has a 7-day cooldown; `.npmrc` enforces a 7-day minimum release age.
 

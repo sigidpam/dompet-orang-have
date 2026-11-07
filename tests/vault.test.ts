@@ -109,6 +109,20 @@ describe('vault encryption', () => {
     lockSession(unlocked);
   });
 
+  it('does not wrap a zeroed key when a lock races PIN change', async () => {
+    const session = await createVault('123456', FAST);
+    const payload = await encryptDataset(session, { survived: true });
+    const changing = changePin(session, '654321', FAST);
+    // Simulate another tab's lock or auto-lock zeroing the live session while
+    // PBKDF2 is still running inside changePin.
+    lockSession(session);
+    await changing;
+    const unlocked = await unlockWithPin('654321');
+    const data = await decryptDataset(unlocked, payload, (value) => value);
+    expect(data).toEqual({ survived: true });
+    lockSession(unlocked);
+  });
+
   it('unlocks with a recovery code and formats it safely', async () => {
     const session = await createVault('123456', FAST);
     const raw = getRecoveryCode(session);

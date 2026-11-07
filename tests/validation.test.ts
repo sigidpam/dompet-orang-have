@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  MAX_ACCOUNTS,
   assertDataset,
   normalizeAccountInput,
   normalizeInvestmentInput,
@@ -213,5 +214,18 @@ describe('dataset import validation', () => {
       ],
     });
     expect(formula.accounts[0]?.name).toBe('=HYPERLINK("http://example.com")');
+  });
+
+  it('rejects datasets above the collection cap', () => {
+    const dataset = emptyDataset(new Date('2026-11-07T00:00:00.000Z'));
+    dataset.accounts = Array.from({ length: MAX_ACCOUNTS + 1 }, (_, index) => ({
+      id: `acc_${index}`,
+      name: `Account ${index}`,
+      type: 'bank' as const,
+      currency: 'IDR',
+      balance: '0',
+      createdAt: '2026-11-07T00:00:00.000Z',
+    }));
+    expect(() => assertDataset(dataset)).toThrow(ValidationError);
   });
 });
