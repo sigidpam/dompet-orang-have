@@ -96,7 +96,7 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico,webmanifest,json}'],
-        globIgnores: ['**/data/gold-price.json'],
+        globIgnores: ['**/data/gold-price.json', '**/data/stock-prices.json'],
         runtimeCaching: [
           {
             // eslint-disable-next-line security/detect-unsafe-regex -- fixed literal path, bounded optional query
@@ -104,6 +104,17 @@ export default defineConfig({
             handler: 'NetworkFirst',
             options: {
               cacheName: 'gold-price',
+              networkTimeoutSeconds: 5,
+              expiration: { maxEntries: 1, maxAgeSeconds: 7 * 24 * 60 * 60 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+          {
+            // eslint-disable-next-line security/detect-unsafe-regex -- fixed literal path, bounded optional query
+            urlPattern: /\/data\/stock-prices\.json(\?.*)?$/,
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'stock-prices',
               networkTimeoutSeconds: 5,
               expiration: { maxEntries: 1, maxAgeSeconds: 7 * 24 * 60 * 60 },
               cacheableResponse: { statuses: [0, 200] },

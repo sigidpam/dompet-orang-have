@@ -66,6 +66,9 @@ soon as possible.
   those controls are required.
 - **Browser storage eviction.** Persistent storage is requested, not guaranteed.
   Keep encrypted backups off-device.
+- **Third-party snapshot accuracy.** IDX prices come from a daily snapshot of the
+  public `fzn0x/idx`/Yahoo quote board, not an exchange real-time feed. Prices can
+  be delayed or unavailable; manual entry is always supported.
 - **Supply chain.** Dependencies are pinned with a lockfile, installed with a
   7-day minimum release age, and monitored by Dependabot, CodeQL, Semgrep, and
   `npm audit`. Build tooling advisories are still possible; see the security
@@ -87,7 +90,8 @@ soon as possible.
 - CSV formula-injection neutralization
 - PWA service worker precaches the app shell only; no financial responses are cached
 - Cross-tab lock/change broadcasts and Web Locks-serialized writes; no sensitive data in analytics or logs
-- Gold reference JSON is same-origin (client CSP stays `self`); the scheduled updater has only `contents: write`, validates numeric ranges, and does not execute source markup
+- Gold reference JSON is same-origin; the scheduled updater has only `contents: write`, validates numeric ranges, and does not execute source markup
+- Stock prices are read from a same-origin daily snapshot; the scheduled updater has only `contents: write`, validates quote ranges/counts, and does not execute source markup
 - Category-specific current values are validated numerically and rendered as text
 - PIN change copies the master key before PBKDF2 awaiting, preventing a racing lock from wrapping a zeroed key
 

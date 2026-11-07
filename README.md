@@ -35,6 +35,9 @@ This rebuild removes the server from the data path:
   tenor only for Deposito/Obligasi; edit an asset to refresh its current value
 - Daily gold reference price from a scheduled GitHub Action, with a manual
   per-asset override when you want the ANTAM retail price instead of spot
+- Daily full-universe IDX stock snapshot from `fzn0x/idx` (no API key); enter a
+  Saham code, press “Ambil harga”, and lot × fetched price auto-calculates
+  “Nilai Saat Ini”. Reksa Dana uses manual NAB × unit with a live preview
 - Exact decimal arithmetic (`decimal.js`) instead of floating-point money
 - FX rates to IDR with manual entry and optional, opt-in Frankfurter sync; missing
   rates are surfaced instead of silently treated as 1.0
@@ -55,8 +58,8 @@ This rebuild removes the server from the data path:
 | Bandit (archived Python prototype) | 0 findings |
 | OWASP ZAP quick scan (DAST) | 0 High, 0 Medium, 0 Low; 3 informational |
 | Secret scan | 0 findings |
-| Unit/integration tests | 63 passing |
-| Browser E2E tests | 18 passing (desktop + mobile) |
+| Unit/integration tests | 68 passing |
+| Browser E2E tests | 20 passing (desktop + mobile) |
 
 See [SECURITY.md](SECURITY.md) and the full
 [security review](docs/SECURITY-REVIEW.md) for scope, residual risks, and the
@@ -159,9 +162,9 @@ and PWA caching strategy.
 ```text
 src/crypto/       PBKDF2/AES-GCM vault, recovery code, encrypted backups
 src/db/           IndexedDB store + repository
-src/domain/       money, validation, summary, CSV, rate sync, gold feed, types
+src/domain/       money, validation, summary, CSV, rate/gold/stock snapshot feeds, types
 src/ui/           Lit views: lock/setup, dashboard, charts, modals, icons
-public/data/      same-origin gold reference price consumed by the PWA
+public/data/      same-origin gold and IDX stock snapshots consumed by the PWA
 scripts/          icon generation, secret scan, gold price fetch
 src/app.ts        application controller (state, actions, focus, auto-lock)
 tests/            Vitest unit/integration tests
@@ -173,8 +176,8 @@ docs/             architecture and security review
 ## Optional FX and gold sync
 
 FX rate sync is off by default. When enabled, it sends only ISO currency codes
-(no amounts, accounts, or identifiers) to `api.frankfurter.dev`, which is the
-only external origin allowed by the CSP. Manual rates always remain available
+(no amounts, accounts, or identifiers) to `api.frankfurter.dev`, the only
+external runtime origin allowed by the CSP. Manual rates always remain available
 offline.
 
 Gold has a daily reference feed. `.github/workflows/gold-price.yml` fetches
@@ -183,6 +186,15 @@ and commits it. The PWA reads that file with a NetworkFirst service-worker cache
 offline it falls back to localStorage. ANTAM's retail page returns 403 to
 automated requests, so the feed is explicitly labeled **spot**, not retail ANTAM.
 Each gold asset can override the reference with a manual current price per gram.
+
+Stock prices come from a daily full-universe snapshot produced by
+`.github/workflows/stock-prices.yml` using the public `fzn0x/idx` API
+(`ihsg.midoriresearch.com`). The Action fetches all ~913 quoted codes and commits
+`public/data/stock-prices.json`; the PWA reads it same-origin, with NetworkFirst
+caching. **No API key is needed.** The refresh button reads the latest snapshot,
+not intraday live data; enter a price manually if you need something newer.
+Reksa Dana has no stock endpoint, so NAB is entered manually and the app
+calculates units × NAB (or uses NIB when filled).
 
 ## License
 

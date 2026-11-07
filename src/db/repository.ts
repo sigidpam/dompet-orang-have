@@ -67,6 +67,7 @@ function investmentFromNormalized(
     ...(normalized.stockCurrentPrice
       ? { stockCurrentPrice: normalized.stockCurrentPrice }
       : {}),
+    ...(normalized.stockCode ? { stockCode: normalized.stockCode } : {}),
     ...(normalized.goldGrams ? { goldGrams: normalized.goldGrams } : {}),
     ...(normalized.goldBuyPricePerGram
       ? { goldBuyPricePerGram: normalized.goldBuyPricePerGram }
@@ -360,9 +361,10 @@ export class Repository {
   }): Promise<Settings> {
     const settings = normalizeSettingsInput(input);
     await this.mutate((draft) => {
-      draft.settings = settings;
+      // Preserve the encrypted integration key when changing UI settings.
+      draft.settings = { ...draft.settings, ...settings };
     });
-    return { ...settings };
+    return { ...this.data.settings };
   }
 
   async replaceDataset(input: unknown): Promise<Dataset> {

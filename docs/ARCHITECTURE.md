@@ -22,6 +22,8 @@ flowchart LR
   HOST[Static host<br/>GitHub Pages] --> SW
   RATES[api.frankfurter.dev<br/>optional, opt-in] -.->|currency codes only| UI
   GOLD[public/data/gold-price.json<br/>same-origin spot reference] --> UI
+  STOCKS[public/data/stock-prices.json<br/>same-origin IDX snapshot] --> UI
+  IDXACT[GitHub Action<br/>daily fzn0x/idx quote board] -->|commit| STOCKS
   GHA[GitHub Action<br/>daily XAU/USD + USD/IDR] -->|commit| GOLD
 ```
 
@@ -75,7 +77,7 @@ Dataset (schemaVersion 2)
 ├── accounts[]      id, name, type, currency, balance, createdAt
 ├── transactions[]  id, accountId, type, category, amount, currency, date, createdAt
 ├── investments[]   id, name, category, principal, cashback, rate, tenor, lots, currency,
-│                   units?, nab?, nib?, stockCurrentPrice?, goldGrams?,
+│                   units?, nab?, nib?, stockCode?, stockCurrentPrice?, goldGrams?,
 │                   goldBuyPricePerGram?, goldCurrentPricePerGram?
 ├── rates[]         currency, rateToIdr, source (manual|frankfurter), updatedAt
 ├── settings        autoLockMinutes, ratesAutoSync
@@ -118,6 +120,16 @@ folded to six validated color slots) and a six-month cashflow bar chart. Charts
 are inline SVG with text labels in HTML, native hover titles, a legend, and a
 table fallback.
 
+## Stock pipeline
+
+`.github/workflows/stock-prices.yml` runs after the IDX close and on demand. It
+fetches the public `fzn0x/idx` universe and quote board
+(`ihsg.midoriresearch.com`), validates that at least 500 quotes are present,
+writes a compact same-origin `public/data/stock-prices.json`, and commits it. The
+PWA reads that file with NetworkFirst caching and looks up any code locally.
+This avoids browser CORS limits and requires no API key. Prices are a daily
+snapshot, not intraday; every Saham price remains manually editable.
+
 ## Gold pipeline
 
 `.github/workflows/gold-price.yml` runs daily and on demand. It fetches XAU/USD
@@ -141,6 +153,8 @@ labeled spot and each gold asset supports a manual current price override.
 | Encrypted backups with a separate passphrase | A backup can be stored off-device without exposing the PIN or recovery code. |
 | CSV formula neutralization | Imported names can be attacker-controlled; spreadsheets execute formulas. |
 | Category-aware forms | Saham needs lots/price, Reksa Dana needs NIB/NAB/units, Emas needs grams/prices, and tenor only applies to Deposito/Obligasi. |
+| Daily full-universe IDX snapshot | The public idx API has no browser CORS; a scheduled Action commits a same-origin snapshot, keeping the PWA static and key-free while supporting arbitrary codes. |
+| Manual NAB for Reksa Dana | There is no reksadana quote source in idx; NAB × units/NIB still gives a current-value calculation. |
 | Spot gold reference + manual override | ANTAM blocks automated requests; a spot reference is honest and a per-asset override covers retail pricing. |
 | Same-origin gold JSON | Keeps the client CSP `connect-src 'self'`; the scheduled workflow, not the browser, talks to external gold/FX APIs. |
 | Web Locks around mutations | Prevents two tabs from overwriting each other with stale whole-dataset snapshots. |

@@ -37,9 +37,9 @@ tests. It is a best-effort review, not a formal third-party audit.
 | Bandit (archived Python) | **0 findings** |
 | OWASP ZAP | **0 High, 0 Medium, 0 Low**, 3 informational |
 | Secret scan | **0 findings** |
-| Unit/integration tests | 63 passed |
-| Browser E2E | 18 passed (desktop + Pixel 7) |
-| Coverage | 83.72% lines, 74.35% branches, 82.88% functions |
+| Unit/integration tests | 68 passed |
+| Browser E2E | 20 passed (desktop + Pixel 7) |
+| Coverage | 84.60% lines, 75.88% branches, 83.24% functions |
 
 ## Findings and resolutions
 
@@ -248,6 +248,10 @@ all are fixed and the key paths have regression tests:
 - Category valuations (Saham lots × price, Reksa Dana NIB/NAB/units, Emas
   grams × price) are validated numerically and rendered as text; no new HTML
   sink was introduced.
+- Stock quotes come from a same-origin daily snapshot of the public `fzn0x/idx`
+  quote board. The updater validates the universe size, quote count, symbol
+  format, and price bounds before writing; the client validates again before use.
+  No API key is stored or sent from the browser.
 - Gold reference data is read from a same-origin JSON file, so the client CSP
   remains `connect-src 'self'`. The scheduled updater has only `contents: write`,
   validates source ranges before writing, and never executes scraped markup.
@@ -256,8 +260,8 @@ all are fixed and the key paths have regression tests:
 - Cross-tab writes are serialized with Web Locks; PIN change copies the master key before any await so a racing lock cannot zero it.
 - Production dependency audit is clean; Actions are pinned to commit SHAs;
   Dependabot has a 7-day cooldown; `.npmrc` enforces a 7-day minimum release age.
-- DAST was re-run after the dashboard, category-aware forms, charts, and gold
-  feed were added: 0 High / 0 Medium / 0 Low, 3 informational.
+- DAST was re-run after the dashboard, category-aware forms, charts, gold feed,
+  and IDX snapshot lookup were added: 0 High / 0 Medium / 0 Low, 3 informational.
 
 ## Reproduction
 

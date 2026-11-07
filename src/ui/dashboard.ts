@@ -117,6 +117,7 @@ function investmentDetailRows(
   const category = investment.category as InvestmentCategory;
   if (category === STOCK_CATEGORY) {
     rows.push(
+      ['Kode saham', investment.stockCode ?? '—'],
       ['Jumlah lot', `${formatNumber(investment.lots, 0)} lot`],
       [
         'Harga saat ini',
