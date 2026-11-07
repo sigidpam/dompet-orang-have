@@ -47,8 +47,8 @@ This rebuild removes the server from the data path:
 | Bandit (archived Python prototype) | 0 findings |
 | OWASP ZAP quick scan (DAST) | 0 High, 0 Medium, 0 Low; 3 informational |
 | Secret scan | 0 findings |
-| Unit/integration tests | 46 passing |
-| Browser E2E tests | 10 passing (desktop + mobile) |
+| Unit/integration tests | 50 passing |
+| Browser E2E tests | 14 passing (desktop + mobile) |
 
 See [SECURITY.md](SECURITY.md) and the full
 [security review](docs/SECURITY-REVIEW.md) for scope, residual risks, and the
@@ -102,8 +102,9 @@ The production target is GitHub Pages with a project path
 
 1. Push the repository to GitHub.
 2. In **Settings → Pages**, set **Source** to **GitHub Actions**.
-3. Merge to `main`. `.github/workflows/deploy.yml` builds with
-   `BASE_PATH=/<repo>/` and deploys `dist/`.
+3. Merge to `main`. `.github/workflows/deploy.yml` waits for the `CI` workflow
+   to succeed, builds the merged commit with `BASE_PATH=/<repo>/`, and deploys
+   `dist/`.
 
 CI on pull requests runs lint, typecheck, coverage, build, secret scan, E2E,
 Semgrep, Bandit, and a production dependency audit. CodeQL runs on `main`, PRs,

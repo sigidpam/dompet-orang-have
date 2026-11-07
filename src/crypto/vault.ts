@@ -382,7 +382,14 @@ export async function createVault(
   return { key: masterKey, rawKey };
 }
 
-export async function unlockWithPin(pin: string): Promise<VaultSession> {
+export interface UnlockOptions {
+  registerFailure?: boolean;
+}
+
+export async function unlockWithPin(
+  pin: string,
+  options: UnlockOptions = {},
+): Promise<VaultSession> {
   const envelope = getEnvelope();
   if (!envelope) {
     throw new VaultError('Vault belum dibuat di perangkat ini.', 'no-vault');
@@ -399,7 +406,9 @@ export async function unlockWithPin(pin: string): Promise<VaultSession> {
       'invalid-pin',
     );
   } catch {
-    registerFailedAttempt();
+    if (options.registerFailure !== false) {
+      registerFailedAttempt();
+    }
     throw new VaultError('PIN salah.', 'invalid-pin');
   }
   if (rawKey.length !== KEY_BYTES) {

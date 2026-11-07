@@ -35,9 +35,9 @@ tests. It is a best-effort review, not a formal third-party audit.
 | Bandit (archived Python) | **0 findings** |
 | OWASP ZAP | **0 High, 0 Medium, 0 Low**, 3 informational |
 | Secret scan | **0 findings** |
-| Unit/integration tests | 46 passed |
-| Browser E2E | 10 passed (desktop + Pixel 7) |
-| Coverage | 81.36% lines, 69.81% branches, 81.76% functions |
+| Unit/integration tests | 50 passed |
+| Browser E2E | 14 passed (desktop + Pixel 7) |
+| Coverage | 81.28% lines, 69.97% branches, 80.98% functions |
 
 ## Findings and resolutions
 
@@ -189,6 +189,43 @@ unlock failed validation and could no longer read the vault.
 **Resolution:** shared `MAX_ACCOUNTS`, `MAX_TRANSACTIONS`, `MAX_INVESTMENTS`,
 and `MAX_RATES` limits are now enforced on every write inside the repository,
 matching the import/load validator. A cap regression test covers imports.
+
+### F14–F23 — Additional review pass (fixed)
+
+A second review pass surfaced and verified these correctness/security issues;
+all are fixed and the key paths have regression tests:
+
+- **F14 Setup rollback data loss** — if a vault envelope was missing (or another
+  tab had created one) but ciphertext survived, a failed setup could delete the
+  ciphertext. Setup now runs under the write lock, refuses when any envelope or
+  ciphertext exists, and rolls back only its own envelope. E2E loses the
+  envelope, attempts setup, restores it, and confirms the data survives.
+- **F15 Recovery-code modal auto-lock** — auto-lock could fire while the
+  once-only code was displayed and clear it. Auto-lock now pauses for that
+  modal in both idle and visibility paths.
+- **F16 Reload after lock** — a cross-tab reload could repopulate plaintext
+  after locking. It now captures the session/repository and re-checks after
+  decryption; pending reloads flush after modal operations.
+- **F17 PIN visibility persisted** — revealing the PIN once left later lock
+  screens in plaintext. The flag resets on lock.
+- **F18 Old-PIN counter pollution** — mistyped old PINs in Settings incremented
+  the lock-screen lockout. Verification now uses `registerFailure: false` and
+  reports corrupt-vs-wrong errors distinctly.
+- **F19 Reset confirmation** — the destructive button never re-rendered and was
+  case-sensitive. It re-renders and accepts case-insensitive `HAPUS`; E2E covers
+  the forgotten-PIN reset path.
+- **F20 FX response handling** — the timeout was cleared before reading the
+  body, and an invalid provider date could corrupt every rate's `updatedAt`,
+  making the vault unopenable. The timeout now spans body reading, size is
+  stream-limited, and dates are calendar-validated.
+- **F21 Malformed IndexedDB record** — a malformed or null record was treated as
+  an empty vault and overwritten. The store now throws and leaves it intact;
+  transient IndexedDB open failures no longer poison the cached promise.
+- **F22 Deploy before CI** — Pages deployed independently of CI. Deployment now
+  triggers from a successful `CI` workflow run for the merged commit.
+- **F23 Async lifecycle races** — recovery verification now locks modal
+  controls, backup import re-checks the repository after PBKDF2, silent rate
+  sync renders updated totals, and cross-tab reloads retry after modals close.
 
 ## Positive controls verified
 

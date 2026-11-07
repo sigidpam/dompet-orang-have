@@ -190,4 +190,14 @@ describe('vault encryption', () => {
     clearAttempts();
     expect(readAttemptState().failures).toBe(0);
   });
+
+  it('can verify an old PIN without touching the lock-screen counter', async () => {
+    await createVault('123456', FAST);
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      await expect(
+        unlockWithPin('000000', { registerFailure: false }),
+      ).rejects.toMatchObject({ code: 'invalid-pin' });
+    }
+    expect(readAttemptState().failures).toBe(0);
+  });
 });

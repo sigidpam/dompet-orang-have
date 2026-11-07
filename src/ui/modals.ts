@@ -780,7 +780,7 @@ function resetModal(app: App): TemplateResult {
       <button
         type="button"
         class="btn btn-danger"
-        ?disabled=${app.state.modalBusy || app.state.resetConfirm.trim() !== 'HAPUS'}
+        ?disabled=${app.state.modalBusy || app.state.resetConfirm.trim().toUpperCase() !== 'HAPUS'}
         @click=${() => void app.resetAll()}
       >
         ${app.state.modalBusy ? 'Menghapus…' : 'Hapus permanen'}

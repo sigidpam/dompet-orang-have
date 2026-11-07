@@ -78,6 +78,20 @@ describe('Frankfurter rate sync', () => {
     ).rejects.toBeInstanceOf(RateFetchError);
   });
 
+  it('rejects a calendar-invalid provider date before it can be persisted', async () => {
+    await expect(
+      fetchRatesFromFrankfurter(
+        ['USD'],
+        (async () =>
+          response({
+            base: 'IDR',
+            date: '2026-13-01',
+            rates: { USD: 0.0000625 },
+          })) as unknown as typeof fetch,
+      ),
+    ).rejects.toBeInstanceOf(RateFetchError);
+  });
+
   it('rejects oversized responses and network failures', async () => {
     const huge = 'x'.repeat(100_001);
     await expect(

@@ -28,13 +28,19 @@ export function createVaultStore(
   let dbPromise: Promise<IDBPDatabase<DompetDB>> | null = null;
 
   function getDb(): Promise<IDBPDatabase<DompetDB>> {
-    dbPromise ??= openDB<DompetDB>(dbName, DB_VERSION, {
-      upgrade(db) {
-        if (!db.objectStoreNames.contains(STORE_NAME)) {
-          db.createObjectStore(STORE_NAME);
-        }
-      },
-    });
+    if (!dbPromise) {
+      dbPromise = openDB<DompetDB>(dbName, DB_VERSION, {
+        upgrade(db) {
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            db.createObjectStore(STORE_NAME);
+          }
+        },
+      }).catch((error: unknown) => {
+        // Do not poison every later operation with a transient open failure.
+        dbPromise = null;
+        throw error;
+      });
+    }
     return dbPromise;
   }
 
@@ -42,14 +48,25 @@ export function createVaultStore(
     async load(): Promise<EncryptedPayload | null> {
       const db = await getDb();
       const value = await db.get(STORE_NAME, RECORD_KEY);
-      if (
-        !value ||
-        typeof value.iv !== 'string' ||
-        typeof value.ct !== 'string'
-      ) {
-        return null;
+      if (value === undefined) return null;
+      const candidate: unknown = value;
+      if (candidate === null || typeof candidate !== 'object') {
+        throw new Error(
+          'Rekaman vault di IndexedDB rusak. Pulihkan dari backup; data tidak ditimpa.',
+        );
       }
-      return { iv: value.iv, ct: value.ct };
+      const record = candidate as { iv?: unknown; ct?: unknown };
+      if (
+        typeof record.iv !== 'string' ||
+        typeof record.ct !== 'string' ||
+        record.iv.length === 0 ||
+        record.ct.length === 0
+      ) {
+        throw new Error(
+          'Rekaman vault di IndexedDB rusak. Pulihkan dari backup; data tidak ditimpa.',
+        );
+      }
+      return { iv: record.iv, ct: record.ct };
     },
 
     async save(payload: EncryptedPayload): Promise<void> {

@@ -165,6 +165,14 @@ export function renderSetup(app: App): TemplateResult {
         </ul>
       </details>
 
+      <button
+        type="button"
+        class="btn btn-ghost mt-3 w-full text-danger hover:text-danger"
+        @click=${() => app.openReset()}
+      >
+        Data lama tidak bisa dibuka? Hapus data lokal
+      </button>
+
       <p class="mt-6 text-center font-mono text-[10px] uppercase tracking-[0.18em] text-faint">
         Lokal-first · Tanpa server · v${app.version}
       </p>

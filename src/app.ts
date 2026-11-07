@@ -230,6 +230,7 @@ export class App {
   private repository: Repository | null = null;
   private lastActivity = Date.now();
   private hiddenAt: number | null = null;
+  private pendingReload = false;
   private pendingFocus: string | null = null;
   private modalTrigger: HTMLElement | null = null;
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -315,8 +316,10 @@ export class App {
       return;
     }
     if (this.state.screen === 'unlocked' && this.session) {
+      this.flushPendingReload();
       const minutes = this.state.dataset?.settings.autoLockMinutes ?? 5;
       if (
+        this.state.modal !== 'recovery-code' &&
         !this.state.modalBusy &&
         Date.now() - this.lastActivity > minutes * 60_000
       ) {
@@ -357,6 +360,35 @@ export class App {
   }
 
   private async reloadFromStore(): Promise<void> {
+    const session = this.session;
+    const current = this.repository;
+    if (this.state.screen !== 'unlocked' || !session || !current) {
+      return;
+    }
+    if (this.state.modalBusy) {
+      this.pendingReload = true;
+      return;
+    }
+    try {
+      const repository = await Repository.open(session);
+      // A lock or reset may have happened while decrypting.
+      if (
+        this.state.screen !== 'unlocked' ||
+        this.session !== session ||
+        this.repository !== current
+      ) {
+        return;
+      }
+      this.repository = repository;
+      this.refreshData();
+      this.render();
+    } catch {
+      // Keep the current view if another tab is mid-write.
+    }
+  }
+
+  private flushPendingReload(): void {
+    if (!this.pendingReload) return;
     if (
       this.state.screen !== 'unlocked' ||
       !this.session ||
@@ -365,13 +397,8 @@ export class App {
     ) {
       return;
     }
-    try {
-      this.repository = await Repository.open(this.session);
-      this.refreshData();
-      this.render();
-    } catch {
-      // Keep the current view if another tab is mid-write.
-    }
+    this.pendingReload = false;
+    void this.reloadFromStore();
   }
 
   private onVisibility(): void {
@@ -381,7 +408,11 @@ export class App {
     }
     if (this.state.screen === 'unlocked' && this.session) {
       const minutes = this.state.dataset?.settings.autoLockMinutes ?? 5;
-      if (this.hiddenAt && Date.now() - this.hiddenAt > minutes * 60_000) {
+      if (
+        this.state.modal !== 'recovery-code' &&
+        this.hiddenAt &&
+        Date.now() - this.hiddenAt > minutes * 60_000
+      ) {
         this.lockNow();
       }
       this.lastActivity = Date.now();
@@ -454,7 +485,9 @@ export class App {
     }
     const modals =
       this.state.modal !== 'none' &&
-      (this.state.screen === 'unlocked' || this.state.screen === 'locked')
+      (this.state.screen === 'unlocked' ||
+        this.state.screen === 'locked' ||
+        this.state.screen === 'setup')
         ? renderModals(this)
         : html``;
     render(
@@ -534,7 +567,9 @@ export class App {
     this.state.setupPin = '';
     this.state.setupPinConfirm = '';
     this.state.setupError = '';
+    this.state.setupVisible = false;
     this.state.lockPin = '';
+    this.state.lockPinVisible = false;
     this.state.lockError = '';
     this.state.lockoutUntil = 0;
     this.state.recoveryCode = '';
@@ -564,6 +599,7 @@ export class App {
     this.state.deleteTarget = null;
     this.state.deleteError = '';
     this.state.modalBusy = false;
+    this.pendingReload = false;
     this.modalTrigger = null;
   }
 
@@ -614,6 +650,19 @@ export class App {
     this.render();
   }
 
+  private async withSetupLock<T>(task: () => Promise<T>): Promise<T> {
+    const locks =
+      typeof navigator !== 'undefined' ? navigator.locks : undefined;
+    if (locks?.request) {
+      return locks.request(
+        'dompet-orang-have-write',
+        { mode: 'exclusive' },
+        () => task(),
+      );
+    }
+    return task();
+  }
+
   async submitSetup(): Promise<void> {
     if (this.state.busy) return;
     const pin = this.state.setupPin;
@@ -634,15 +683,38 @@ export class App {
     this.state.busy = true;
     this.state.setupError = '';
     this.render();
-    let session: VaultSession | null = null;
     try {
-      session = await createVault(pin);
-      const repository = await Repository.open(session);
-      this.session = session;
-      this.repository = repository;
+      const created = await this.withSetupLock(async () => {
+        if (hasVault()) {
+          throw new Error(
+            'Vault sudah ada di perangkat ini. Muat ulang halaman untuk membukanya.',
+          );
+        }
+        const existing = await vaultStore.load();
+        if (existing) {
+          throw new Error(
+            'Data terenkripsi lama ditemukan tetapi kunci vault tidak ada. Pulihkan envelope dari backup, atau hapus data lokal untuk memulai baru.',
+          );
+        }
+        const session = await createVault(pin);
+        try {
+          const repository = await Repository.open(session);
+          return { session, repository };
+        } catch (error) {
+          lockSession(session);
+          // Only the envelope created above is removed; existing ciphertext is
+          // never deleted here.
+          clearVault();
+          throw error;
+        }
+      });
+      this.session = created.session;
+      this.repository = created.repository;
       this.state.screen = 'unlocked';
       this.state.modal = 'recovery-code';
-      this.state.recoveryCode = formatRecoveryCode(getRecoveryCode(session));
+      this.state.recoveryCode = formatRecoveryCode(
+        getRecoveryCode(created.session),
+      );
       this.state.recoveryAcknowledged = false;
       this.state.setupPin = '';
       this.state.setupPinConfirm = '';
@@ -652,19 +724,16 @@ export class App {
       this.broadcast('changed');
       this.pendingFocus = '.modal-panel';
     } catch (error) {
-      if (session) {
-        lockSession(session);
-        clearVault();
-        try {
-          await vaultStore.clear();
-        } catch {
-          // Ignore cleanup failure; the error below is what matters.
-        }
-      }
       this.session = null;
       this.repository = null;
-      this.state.setupError = messageOf(error);
-      this.pendingFocus = '#setup-pin';
+      if (hasVault()) {
+        this.state.screen = 'locked';
+        this.state.lockError = messageOf(error);
+        this.pendingFocus = '#unlock-pin';
+      } else {
+        this.state.setupError = messageOf(error);
+        this.pendingFocus = '#setup-pin';
+      }
     } finally {
       this.state.busy = false;
       this.render();
@@ -841,7 +910,11 @@ export class App {
   }
 
   openReset(): void {
-    if (this.state.screen !== 'locked' && this.state.screen !== 'unlocked') {
+    if (
+      this.state.screen !== 'locked' &&
+      this.state.screen !== 'unlocked' &&
+      this.state.screen !== 'setup'
+    ) {
       return;
     }
     if (this.state.modal === 'none') {
@@ -866,6 +939,7 @@ export class App {
     this.state.deleteError = '';
     this.modalTrigger = null;
     this.render();
+    this.flushPendingReload();
     if (trigger?.isConnected) {
       requestAnimationFrame(() => trigger.focus());
     }
@@ -880,6 +954,7 @@ export class App {
     this.refreshData();
     this.broadcast('changed');
     this.notify(message, 'success');
+    this.flushPendingReload();
     if (trigger?.isConnected) {
       requestAnimationFrame(() => trigger.focus());
     }
@@ -976,6 +1051,7 @@ export class App {
   setResetConfirm(value: string): void {
     this.state.resetConfirm = value;
     this.state.resetError = '';
+    this.render();
   }
 
   setRecoveryInput(value: string): void {
@@ -1130,6 +1206,8 @@ export class App {
       this.broadcast('changed');
       if (!silent) {
         this.notify(`${count} kurs diperbarui (${result.date}).`, 'success');
+      } else {
+        this.render();
       }
     } catch (error) {
       if (!silent) {
@@ -1188,6 +1266,7 @@ export class App {
 
   async submitChangePin(): Promise<void> {
     if (this.state.modalBusy || !this.session) return;
+    const session = this.session;
     const form = this.state.changePin;
     try {
       validatePin(form.newPin);
@@ -1217,16 +1296,22 @@ export class App {
         }
         let check: VaultSession | null = null;
         try {
-          check = await unlockWithPin(form.oldPin);
-        } catch {
-          form.error = 'PIN lama salah.';
+          // Do not count a mistyped old PIN toward the lock-screen lockout.
+          check = await unlockWithPin(form.oldPin, {
+            registerFailure: false,
+          });
+        } catch (error) {
+          form.error =
+            error instanceof VaultError && error.code === 'invalid-pin'
+              ? 'PIN lama salah.'
+              : messageOf(error);
           this.pendingFocus = '#old-pin';
           return;
         } finally {
           if (check) lockSession(check);
         }
       }
-      await changePin(this.session, form.newPin);
+      await changePin(session, form.newPin);
       this.state.recoveredSession = false;
       this.state.changePin = defaultChangePin();
       this.finishModal('PIN berhasil diubah.');
@@ -1249,12 +1334,16 @@ export class App {
       return;
     }
     this.state.busy = true;
+    this.state.modalBusy = true;
     this.state.recoveryError = '';
     this.render();
     let session: VaultSession | null = null;
     try {
       session = await unlockWithRecoveryCode(code);
       const repository = await Repository.open(session);
+      if (this.state.screen !== 'locked') {
+        throw new Error('Vault tidak lagi dalam keadaan terkunci.');
+      }
       this.session = session;
       this.repository = repository;
       this.state.screen = 'unlocked';
@@ -1274,13 +1363,14 @@ export class App {
       this.pendingFocus = '#recovery-input';
     } finally {
       this.state.busy = false;
+      this.state.modalBusy = false;
       this.render();
     }
   }
 
   async resetAll(): Promise<void> {
     if (this.state.modalBusy) return;
-    if (this.state.resetConfirm.trim() !== 'HAPUS') {
+    if (this.state.resetConfirm.trim().toUpperCase() !== 'HAPUS') {
       this.state.resetError = 'Ketik HAPUS untuk mengonfirmasi.';
       this.render();
       return;
@@ -1385,7 +1475,8 @@ export class App {
   }
 
   async importBackup(): Promise<void> {
-    if (!this.repository || this.state.modalBusy) return;
+    const repository = this.repository;
+    if (!repository || this.state.modalBusy) return;
     const file = this.state.importFile;
     if (!file) {
       this.state.importError = 'Pilih file backup terlebih dahulu.';
@@ -1419,7 +1510,14 @@ export class App {
         this.state.importPassphrase,
         assertDataset,
       );
-      await this.repository.replaceDataset(dataset);
+      // A cross-tab lock/reset may have happened during PBKDF2 decryption.
+      if (
+        this.state.screen !== 'unlocked' ||
+        this.repository !== repository
+      ) {
+        return;
+      }
+      await repository.replaceDataset(dataset);
       this.state.importFile = null;
       this.state.importPassphrase = '';
       this.finishModal('Backup berhasil diimpor.');
