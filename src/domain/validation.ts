@@ -30,6 +30,7 @@ import {
   parseRate,
   toDecimal,
 } from './money';
+import { isMarketPricedCategory } from './investments';
 
 const NAME_MAX = 80;
 const CATEGORY_MAX = 60;
@@ -133,6 +134,12 @@ export interface TransactionFormInput {
   category: string;
   amount: string;
   date: string;
+  investmentId?: string;
+  investmentCategory?: string;
+  investmentName?: string;
+  stockCode?: string;
+  quantity?: string;
+  unitPrice?: string;
 }
 
 export interface NormalizedTransactionInput {
@@ -141,6 +148,138 @@ export interface NormalizedTransactionInput {
   category: string;
   amount: string;
   date: string;
+}
+
+export interface NormalizedTradeInput {
+  accountId: string;
+  type: 'buy' | 'sell';
+  category: InvestmentCategory;
+  date: string;
+  amount?: string;
+  quantity?: string;
+  unitPrice?: string;
+  name?: string;
+  stockCode?: string;
+  investmentId?: string;
+}
+
+/**
+ * Validates a buy/sell against a cash account. The repository resolves the
+ * final amount and quantities against the current holding.
+ */
+export function normalizeTradeInput(
+  input: TransactionFormInput,
+): NormalizedTradeInput {
+  const accountId = cleanText(input.accountId, 'accountId', ID_MAX);
+  if (input.type !== 'buy' && input.type !== 'sell') {
+    throw new ValidationError('Jenis transaksi investasi tidak valid.', 'type');
+  }
+  const category = cleanText(
+    input.investmentCategory ?? input.category,
+    'investmentCategory',
+    CATEGORY_MAX,
+  );
+  if (!INVESTMENT_CATEGORIES.includes(category as InvestmentCategory)) {
+    throw new ValidationError('Kategori investasi tidak valid.', 'investmentCategory');
+  }
+  const typedCategory = category as InvestmentCategory;
+  const date = normalizeDate(input.date, 'date');
+  const investmentId =
+    (input.investmentId ?? '').trim() === ''
+      ? undefined
+      : cleanText(input.investmentId ?? '', 'investmentId', ID_MAX);
+  if (input.type === 'sell' && !investmentId) {
+    throw new ValidationError('Pilih investasi yang akan dijual.', 'investmentId');
+  }
+
+  if (!isMarketPricedCategory(typedCategory)) {
+    const amount = parseAmount(input.amount, 'amount');
+    if (amount.lte(0)) {
+      throw new ValidationError('Jumlah harus lebih besar dari 0.', 'amount');
+    }
+    return {
+      accountId,
+      type: input.type,
+      category: typedCategory,
+      date,
+      amount: amountToString(amount),
+      ...(investmentId ? { investmentId } : {}),
+    };
+  }
+
+  const quantityRaw = input.quantity ?? '';
+  const unitPriceRaw = input.unitPrice ?? '';
+  let quantity: Decimal;
+  if (typedCategory === STOCK_CATEGORY) {
+    quantity = new Decimal(
+      parseInteger(quantityRaw, 'quantity', 1, 1_000_000_000),
+    );
+  } else {
+    quantity = parseDecimalInput(quantityRaw, 'quantity', {
+      min: new Decimal('0.000001'),
+      max: new Decimal('1000000000000'),
+      maxPlaces: typedCategory === GOLD_CATEGORY ? 4 : 6,
+    });
+  }
+  const unitPrice =
+    typedCategory === FUND_CATEGORY
+      ? parseDecimalInput(unitPriceRaw, 'unitPrice', {
+          min: new Decimal('0.000001'),
+          max: new Decimal('1000000000000'),
+          maxPlaces: 6,
+        })
+      : parseAmount(unitPriceRaw, 'unitPrice');
+  if (unitPrice.lte(0)) {
+    throw new ValidationError('Harga satuan harus lebih besar dari 0.', 'unitPrice');
+  }
+
+  let name: string | undefined;
+  let stockCode: string | undefined;
+  if (typedCategory === STOCK_CATEGORY) {
+    const code = (input.stockCode ?? '').trim().toUpperCase();
+    if (code !== '') {
+      if (!/^[A-Z]{2,6}$/.test(code)) {
+        throw new ValidationError(
+          'Kode saham harus 2–6 huruf, contoh BBCA.',
+          'stockCode',
+        );
+      }
+      stockCode = code;
+    } else if (input.type === 'buy') {
+      throw new ValidationError(
+        'Kode saham harus 2–6 huruf, contoh BBCA.',
+        'stockCode',
+      );
+    }
+    const rawName = (input.investmentName ?? '').trim();
+    if (rawName !== '') {
+      name = cleanText(rawName, 'investmentName');
+    } else if (input.type === 'buy') {
+      name = stockCode;
+    }
+  } else {
+    const rawName = (input.investmentName ?? '').trim();
+    if (rawName !== '') {
+      name = cleanText(rawName, 'investmentName');
+    } else if (input.type === 'buy') {
+      throw new ValidationError('Nama aset wajib diisi.', 'investmentName');
+    }
+  }
+
+  return {
+    accountId,
+    type: input.type,
+    category: typedCategory,
+    date,
+    quantity: decimalToString(
+      quantity,
+      typedCategory === GOLD_CATEGORY ? 4 : typedCategory === FUND_CATEGORY ? 6 : 0,
+    ),
+    unitPrice: decimalToString(unitPrice, 6),
+    name,
+    ...(stockCode ? { stockCode } : {}),
+    ...(investmentId ? { investmentId } : {}),
+  };
 }
 
 export function normalizeTransactionInput(
@@ -543,18 +682,75 @@ export function assertDataset(value: unknown): Dataset {
     if (!accountIds.has(accountId)) {
       throw new ValidationError('Transaksi merujuk rekening yang tidak ada.', 'accountId');
     }
-    if (item.type !== 'income' && item.type !== 'expense') {
+    const type = item.type;
+    if (
+      type !== 'income' &&
+      type !== 'expense' &&
+      type !== 'buy' &&
+      type !== 'sell'
+    ) {
       throw new ValidationError('Jenis transaksi tidak valid.', 'type');
+    }
+    const investmentId =
+      item.investmentId === undefined || item.investmentId === ''
+        ? undefined
+        : readString(item, 'investmentId', 'investmentId', ID_MAX);
+    const investmentLabel =
+      item.investmentLabel === undefined || item.investmentLabel === ''
+        ? undefined
+        : readString(item, 'investmentLabel', 'investmentLabel');
+    const rawInvestmentCategory = item.investmentCategory;
+    if (
+      rawInvestmentCategory !== undefined &&
+      (typeof rawInvestmentCategory !== 'string' ||
+        !INVESTMENT_CATEGORIES.includes(
+          rawInvestmentCategory as InvestmentCategory,
+        ))
+    ) {
+      throw new ValidationError('Kategori investasi tidak valid.', 'investmentCategory');
+    }
+    const investmentCategory = rawInvestmentCategory as
+      | InvestmentCategory
+      | undefined;
+    const quantity = readOptionalDecimal(item, 'quantity', 'quantity', 6);
+    const unitPrice = readOptionalDecimal(item, 'unitPrice', 'unitPrice', 6);
+    if (type === 'buy' || type === 'sell') {
+      if (!investmentId) {
+        throw new ValidationError(
+          'Transaksi investasi harus merujuk aset.',
+          'investmentId',
+        );
+      }
+      if (!investmentCategory) {
+        throw new ValidationError(
+          'Kategori investasi transaksi tidak valid.',
+          'investmentCategory',
+        );
+      }
+      if (
+        isMarketPricedCategory(investmentCategory) &&
+        (!quantity || !unitPrice)
+      ) {
+        throw new ValidationError(
+          'Kuantitas dan harga satuan transaksi investasi tidak valid.',
+          'quantity',
+        );
+      }
     }
     return {
       id,
       accountId,
-      type: item.type,
+      type,
       category: readString(item, 'category', 'category', CATEGORY_MAX),
       amount: readAmount(item, 'amount', 'amount'),
       currency: readCurrency(item),
       date: normalizeDate(String(item.date ?? ''), 'date'),
       createdAt: readIso(item, 'createdAt'),
+      ...(investmentId ? { investmentId } : {}),
+      ...(investmentLabel ? { investmentLabel } : {}),
+      ...(investmentCategory ? { investmentCategory } : {}),
+      ...(quantity ? { quantity } : {}),
+      ...(unitPrice ? { unitPrice } : {}),
     };
   });
 
@@ -623,6 +819,18 @@ export function assertDataset(value: unknown): Dataset {
       ...(goldCurrentPricePerGram ? { goldCurrentPricePerGram } : {}),
     };
   });
+
+  for (const transaction of transactions) {
+    if (
+      transaction.investmentId &&
+      !investmentIds.has(transaction.investmentId)
+    ) {
+      throw new ValidationError(
+        'Transaksi merujuk investasi yang tidak ada.',
+        'investmentId',
+      );
+    }
+  }
 
   const rateCurrencies = new Set<string>();
   const rates: ExchangeRate[] = ratesRaw.map((item) => {

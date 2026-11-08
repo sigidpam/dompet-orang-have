@@ -1,6 +1,7 @@
 import { html, nothing, type TemplateResult } from 'lit';
 import type { App } from '../app';
 import {
+  ACCOUNT_TYPES,
   CURATED_CURRENCIES,
   FUND_CATEGORY,
   GOLD_CATEGORY,
@@ -8,6 +9,9 @@ import {
   RETURN_CATEGORIES,
   STOCK_CATEGORY,
   TENOR_CATEGORIES,
+  type Account,
+  type AccountType,
+  type Investment,
   type InvestmentCategory,
 } from '../domain/types';
 import {
@@ -19,6 +23,12 @@ import {
   formatRate,
   toDecimal,
 } from '../domain/money';
+import {
+  investmentMultiplier,
+  investmentQuantity,
+  investmentQuantityLabel,
+  isMarketPricedCategory,
+} from '../domain/investments';
 import { icon } from './icons';
 import { errorSummary, fieldError, modalShell } from './components';
 
@@ -54,6 +64,12 @@ const TRANSACTION_FIELD_IDS: Record<string, string> = {
   category: 'tx-category',
   amount: 'tx-amount',
   date: 'tx-date',
+  investmentId: 'tx-investment',
+  investmentCategory: 'tx-investment-category',
+  investmentName: 'tx-investment-name',
+  stockCode: 'tx-stock-code',
+  quantity: 'tx-quantity',
+  unitPrice: 'tx-unit-price',
 };
 
 function currencyList(app: App): string[] {
@@ -76,6 +92,92 @@ function currencyDatalist(app: App): TemplateResult {
   </datalist>`;
 }
 
+function accountOptions(
+  accounts: Account[],
+  selectedId = '',
+): TemplateResult {
+  return html`${ACCOUNT_TYPES.map((type: AccountType) => {
+    const members = accounts.filter((account) => account.type === type);
+    if (members.length === 0) return nothing;
+    const label =
+      type === 'bank' ? 'Bank' : type === 'cash' ? 'Tunai' : 'E-Wallet';
+    return html`<optgroup label=${label}>
+      ${members.map(
+        (account) =>
+          html`<option value=${account.id} ?selected=${account.id === selectedId}>
+            ${account.name} (${account.currency}) ·
+            ${formatMoney(account.balance, account.currency)}
+          </option>`,
+      )}
+    </optgroup>`;
+  })}`;
+}
+
+function availableInvestments(investments: Investment[]): Investment[] {
+  return investments.filter((investment) =>
+    isMarketPricedCategory(investment.category)
+      ? investmentQuantity(investment).gt(0)
+      : toDecimal(investment.principal).gt(0),
+  );
+}
+
+function investmentOptions(
+  investments: Investment[],
+  selectedId = '',
+): TemplateResult {
+  const groups = new Map<string, Investment[]>();
+  for (const investment of availableInvestments(investments)) {
+    const members = groups.get(investment.category) ?? [];
+    members.push(investment);
+    groups.set(investment.category, members);
+  }
+  return html`${INVESTMENT_CATEGORIES.filter((category) =>
+    groups.has(category),
+  ).map((category) => {
+    const members = groups.get(category) ?? [];
+    return html`<optgroup label=${category}>
+      ${members.map((investment) => {
+        const label = isMarketPricedCategory(investment.category)
+          ? `${formatNumber(investmentQuantity(investment), 6)} ${investmentQuantityLabel(investment.category)}`
+          : formatMoney(investment.principal, investment.currency);
+        return html`<option value=${investment.id} ?selected=${investment.id === selectedId}>
+          ${investment.name}${investment.stockCode ? ` (${investment.stockCode})` : ''}
+          · ${label}
+        </option>`;
+      })}
+    </optgroup>`;
+  })}`;
+}
+
+function tradePreview(form: {
+  type: string;
+  category: string;
+  amount: string;
+  quantity: string;
+  unitPrice: string;
+}): Decimal | null {
+  if (form.type !== 'buy' && form.type !== 'sell') return null;
+  const category = form.category;
+  if (!isMarketPricedCategory(category)) {
+    const amount = toDecimal(form.amount || '0');
+    return amount.gt(0) ? amount : null;
+  }
+  const quantity = toDecimal(form.quantity || '0');
+  const unitPrice = toDecimal(form.unitPrice || '0');
+  if (!quantity.gt(0) || !unitPrice.gt(0)) return null;
+  return quantity.times(investmentMultiplier(category)).times(unitPrice);
+}
+
+function selectedInvestment(
+  app: App,
+  investmentId: string | undefined,
+): Investment | undefined {
+  if (!investmentId) return undefined;
+  return app.state.dataset?.investments.find(
+    (investment) => investment.id === investmentId,
+  );
+}
+
 function closeButton(app: App, label = 'Batal'): TemplateResult {
   return html`<button
     type="button"
@@ -92,7 +194,8 @@ function accountModal(app: App): TemplateResult {
   const errors = app.state.accountErrors;
   return modalShell({
     title: 'Tambah rekening',
-    subtitle: 'Saldo awal disimpan lokal dan terenkripsi.',
+    subtitle:
+      'Nama, tipe, dan mata uang yang sama digabung di dashboard. Saldo awal disimpan lokal dan terenkripsi.',
     onClose: () => app.closeModal(),
     closeDisabled: app.state.modalBusy,
     body: html`<form
@@ -311,7 +414,9 @@ function investmentModal(app: App): TemplateResult {
               )}
           >
             ${categoryOptions.map(
-              (option) => html`<option value=${option}>${option}</option>`,
+              (option) => html`<option value=${option} ?selected=${option === form.category}>
+                ${option}
+              </option>`,
             )}
           </select>
           ${fieldError('inv-category-error', errors.category)}
@@ -345,7 +450,7 @@ function investmentModal(app: App): TemplateResult {
             <strong class="text-accent">${market ? formatIdr(market.pricePerGram) + '/gram' : 'belum tersedia'}</strong>.
           </div>`
         : html`<div>
-            <label class="field-label" for="inv-principal">Nilai Investasi</label>
+            <label class="field-label" for="inv-principal">${isStock || isFund ? 'Harga beli / modal' : 'Nilai Investasi'}</label>
             <input
               id="inv-principal"
               class="field-input font-mono tabular"
@@ -548,6 +653,14 @@ function investmentModal(app: App): TemplateResult {
                   )}
               />
               ${fieldError('inv-gold-buy-error', errors.goldBuyPricePerGram)}
+              <button
+                type="button"
+                class="btn mt-2 w-full"
+                ?disabled=${!app.state.goldPrice || form.currency !== 'IDR'}
+                @click=${() => app.fillInvestmentGoldBuyPrice()}
+              >
+                ${icon('refresh', 'size-4')} Pakai acuan
+              </button>
             </div>
             <div>
               <label class="field-label" for="inv-gold-grams">Gramasi</label>
@@ -725,11 +838,54 @@ function transactionModal(app: App): TemplateResult {
       footer: closeButton(app),
     });
   }
+
+  const isBuy = form.type === 'buy';
+  const isSell = form.type === 'sell';
+  const isTrade = isBuy || isSell;
+  const tradeCategory = form.investmentCategory ?? '';
+  const market = isTrade && isMarketPricedCategory(tradeCategory);
+  const account = dataset.accounts.find(
+    (candidate) => candidate.id === form.accountId,
+  );
+  const selected = selectedInvestment(app, form.investmentId);
+  const selectedQuantity =
+    selected && isMarketPricedCategory(selected.category)
+      ? investmentQuantity(selected)
+      : null;
+  const preview = tradePreview({
+    type: form.type,
+    category: tradeCategory,
+    amount: form.amount,
+    quantity: form.quantity ?? '',
+    unitPrice: form.unitPrice ?? '',
+  });
+  const amountCurrency = account?.currency ?? 'IDR';
+  const isStock = tradeCategory === STOCK_CATEGORY;
+  const isFund = tradeCategory === FUND_CATEGORY;
+  const isGold = tradeCategory === GOLD_CATEGORY;
+  const quantityLabel = market
+    ? investmentQuantityLabel(tradeCategory)
+    : 'Jumlah';
+  const priceLabel = isStock
+    ? 'Harga / lembar'
+    : isFund
+      ? 'NAB / unit'
+      : isGold
+        ? 'Harga / gram'
+        : 'Harga satuan';
+
   return modalShell({
-    title: 'Tambah transaksi',
-    subtitle: 'Saldo rekening diperbarui otomatis sesuai jenis transaksi.',
+    title: isTrade
+      ? isBuy
+        ? 'Beli investasi'
+        : 'Jual investasi'
+      : 'Tambah transaksi',
+    subtitle: isTrade
+      ? 'Transaksi memindahkan dana antara rekening dan investasi.'
+      : 'Saldo rekening diperbarui otomatis sesuai jenis transaksi.',
     onClose: () => app.closeModal(),
     closeDisabled: app.state.modalBusy,
+    wide: isTrade,
     body: html`<form
       id="transaction-form"
       class="space-y-4"
@@ -747,17 +903,24 @@ function transactionModal(app: App): TemplateResult {
             class="field-input"
             .value=${form.type}
             @change=${(event: Event) =>
-              app.setTransactionField(
-                'type',
+              app.setTransactionType(
                 (event.target as HTMLSelectElement).value,
               )}
           >
-            <option value="expense">Pengeluaran</option>
-            <option value="income">Pemasukan</option>
+            <option value="expense" ?selected=${form.type === 'expense'}>Pengeluaran</option>
+            <option value="income" ?selected=${form.type === 'income'}>Pemasukan</option>
+            <option value="buy" ?selected=${form.type === 'buy'}>Beli investasi</option>
+            <option value="sell" ?selected=${form.type === 'sell'}>Jual investasi</option>
           </select>
         </div>
         <div>
-          <label class="field-label" for="tx-account">Rekening</label>
+          <label class="field-label" for="tx-account">
+            ${isBuy
+              ? 'Rekening sumber'
+              : isSell
+                ? 'Rekening tujuan'
+                : 'Rekening / cash'}
+          </label>
           <select
             id="tx-account"
             class="field-input"
@@ -770,72 +933,401 @@ function transactionModal(app: App): TemplateResult {
                 (event.target as HTMLSelectElement).value,
               )}
           >
-            ${dataset.accounts.map(
-              (account) => html`<option value=${account.id}>
-                ${account.name} (${account.currency})
-              </option>`,
-            )}
+            ${accountOptions(dataset.accounts, form.accountId)}
           </select>
           ${fieldError('tx-account-error', errors.accountId)}
+          ${isTrade
+            ? html`<p class="field-hint">
+                Pilih rekening ${isBuy ? 'yang membayar' : 'yang menerima hasil'};
+                mata uangnya harus sama dengan aset.
+              </p>`
+            : nothing}
         </div>
       </div>
-      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div>
-          <label class="field-label" for="tx-category">Kategori</label>
-          <input
-            id="tx-category"
-            class="field-input"
-            type="text"
-            maxlength="60"
-            list="transaction-categories"
-            placeholder="Makan, Gaji, Transport…"
-            .value=${form.category}
-            data-autofocus
-            aria-invalid=${errors.category ? 'true' : 'false'}
-            aria-describedby=${errors.category ? 'tx-category-error' : nothing}
-            @input=${(event: Event) =>
-              app.setTransactionField(
-                'category',
-                (event.target as HTMLInputElement).value,
-              )}
-          />
-          <datalist id="transaction-categories">
-            ${[
-              'Gaji',
-              'Bonus',
-              'Makan',
-              'Transport',
-              'Tagihan',
-              'Belanja',
-              'Hiburan',
-              'Kesehatan',
-              'Pendidikan',
-              'Investasi',
-              'Lainnya',
-            ].map((category) => html`<option value=${category}></option>`)}
-          </datalist>
-          ${fieldError('tx-category-error', errors.category)}
-        </div>
-        <div>
-          <label class="field-label" for="tx-amount">Jumlah</label>
-          <input
-            id="tx-amount"
-            class="field-input font-mono tabular"
-            type="text"
-            inputmode="decimal"
-            placeholder="0"
-            .value=${form.amount}
-            aria-invalid=${errors.amount ? 'true' : 'false'}
-            aria-describedby=${errors.amount ? 'tx-amount-error' : nothing}
-            @input=${(event: Event) =>
-              app.setTransactionField(
-                'amount',
-                (event.target as HTMLInputElement).value,
-              )}
-          />
-          ${fieldError('tx-amount-error', errors.amount)}
-        </div>
-      </div>
+
+      ${!isTrade
+        ? html`<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label class="field-label" for="tx-category">Kategori</label>
+              <input
+                id="tx-category"
+                class="field-input"
+                type="text"
+                maxlength="60"
+                list="transaction-categories"
+                placeholder="Makan, Gaji, Transport…"
+                .value=${form.category}
+                data-autofocus
+                aria-invalid=${errors.category ? 'true' : 'false'}
+                aria-describedby=${errors.category ? 'tx-category-error' : nothing}
+                @input=${(event: Event) =>
+                  app.setTransactionField(
+                    'category',
+                    (event.target as HTMLInputElement).value,
+                  )}
+              />
+              <datalist id="transaction-categories">
+                ${[
+                  'Gaji',
+                  'Bonus',
+                  'Makan',
+                  'Transport',
+                  'Tagihan',
+                  'Belanja',
+                  'Hiburan',
+                  'Kesehatan',
+                  'Pendidikan',
+                  'Investasi',
+                  'Lainnya',
+                ].map((category) => html`<option value=${category}></option>`)}
+              </datalist>
+              ${fieldError('tx-category-error', errors.category)}
+            </div>
+            <div>
+              <label class="field-label" for="tx-amount">Jumlah</label>
+              <input
+                id="tx-amount"
+                class="field-input font-mono tabular"
+                type="text"
+                inputmode="decimal"
+                placeholder="0"
+                .value=${form.amount}
+                aria-invalid=${errors.amount ? 'true' : 'false'}
+                aria-describedby=${errors.amount ? 'tx-amount-error' : nothing}
+                @input=${(event: Event) =>
+                  app.setTransactionField(
+                    'amount',
+                    (event.target as HTMLInputElement).value,
+                  )}
+              />
+              ${fieldError('tx-amount-error', errors.amount)}
+            </div>
+          </div>`
+        : isBuy
+          ? html`<div class="space-y-3">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label class="field-label" for="tx-investment-category">
+                    Kategori investasi
+                  </label>
+                  <select
+                    id="tx-investment-category"
+                    class="field-input"
+                    .value=${tradeCategory}
+                    aria-invalid=${errors.investmentCategory ? 'true' : 'false'}
+                    aria-describedby=${errors.investmentCategory ? 'tx-investment-category-error' : nothing}
+                    @change=${(event: Event) =>
+                      app.setTradeCategory(
+                        (event.target as HTMLSelectElement).value,
+                      )}
+                  >
+                    ${INVESTMENT_CATEGORIES.map(
+                      (category) =>
+                        html`<option value=${category} ?selected=${category === tradeCategory}>
+                          ${category}
+                        </option>`,
+                    )}
+                  </select>
+                  ${fieldError('investmentCategory', errors.investmentCategory)}
+                </div>
+                ${isStock
+                  ? html`<div>
+                      <label class="field-label" for="tx-stock-code">
+                        Kode saham
+                      </label>
+                      <div class="flex gap-2">
+                        <input
+                          id="tx-stock-code"
+                          class="field-input min-w-0 font-mono uppercase"
+                          type="text"
+                          maxlength="6"
+                          autocomplete="off"
+                          autocapitalize="characters"
+                          placeholder="BBCA"
+                          .value=${form.stockCode ?? ''}
+                          data-autofocus
+                          aria-invalid=${errors.stockCode ? 'true' : 'false'}
+                          aria-describedby=${errors.stockCode ? 'tx-stock-code-error' : nothing}
+                          @input=${(event: Event) =>
+                            app.setTradeStockCode(
+                              (event.target as HTMLInputElement).value,
+                            )}
+                        />
+                        <button
+                          type="button"
+                          class="btn shrink-0"
+                          ?disabled=${app.state.stockLookupLoading || app.state.modalBusy}
+                          @click=${() => void app.refreshTradeStockPrice()}
+                        >
+                          ${icon('refresh', 'size-4')}
+                          ${app.state.stockLookupLoading ? 'Mengambil…' : 'Ambil harga'}
+                        </button>
+                      </div>
+                      ${fieldError('stockCode', errors.stockCode)}
+                      ${app.state.stockLookupError
+                        ? html`<p class="mt-1 text-xs leading-5 text-danger" role="alert">
+                            ${app.state.stockLookupError}
+                          </p>`
+                        : nothing}
+                    </div>`
+                  : html`<div>
+                      <label class="field-label" for="tx-investment-name">
+                        Nama aset
+                      </label>
+                      <input
+                        id="tx-investment-name"
+                        class="field-input"
+                        type="text"
+                        maxlength="80"
+                        placeholder=${isGold ? 'Emas ANTAM' : 'Reksa Dana Pasar Uang'}
+                        .value=${form.investmentName ?? ''}
+                        data-autofocus
+                        aria-invalid=${errors.investmentName ? 'true' : 'false'}
+                        aria-describedby=${errors.investmentName ? 'tx-investment-name-error' : nothing}
+                        @input=${(event: Event) =>
+                          app.setTransactionField(
+                            'investmentName',
+                            (event.target as HTMLInputElement).value,
+                          )}
+                      />
+                      ${fieldError('investmentName', errors.investmentName)}
+                    </div>`}
+              </div>
+              ${isStock
+                ? html`<div>
+                    <label class="field-label" for="tx-investment-name">
+                      Nama aset (opsional)
+                    </label>
+                    <input
+                      id="tx-investment-name"
+                      class="field-input"
+                      type="text"
+                      maxlength="80"
+                      placeholder="Bank Central Asia"
+                      .value=${form.investmentName ?? ''}
+                      @input=${(event: Event) =>
+                        app.setTransactionField(
+                          'investmentName',
+                          (event.target as HTMLInputElement).value,
+                        )}
+                    />
+                  </div>`
+                : nothing}
+              ${market
+                ? html`<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <label class="field-label" for="tx-quantity">
+                        Jumlah ${quantityLabel.toLowerCase()}
+                      </label>
+                      <input
+                        id="tx-quantity"
+                        class="field-input font-mono tabular"
+                        type="text"
+                        inputmode=${isStock ? 'numeric' : 'decimal'}
+                        placeholder="0"
+                        .value=${form.quantity ?? ''}
+                        aria-invalid=${errors.quantity ? 'true' : 'false'}
+                        aria-describedby=${errors.quantity ? 'tx-quantity-error' : nothing}
+                        @input=${(event: Event) =>
+                          app.setTransactionField(
+                            'quantity',
+                            (event.target as HTMLInputElement).value,
+                            true,
+                          )}
+                      />
+                      ${fieldError('quantity', errors.quantity)}
+                      ${isStock
+                        ? html`<p class="field-hint">1 lot = 100 lembar.</p>`
+                        : nothing}
+                    </div>
+                    <div>
+                      <label class="field-label" for="tx-unit-price">
+                        ${priceLabel}
+                      </label>
+                      <div class="flex gap-2">
+                        <input
+                          id="tx-unit-price"
+                          class="field-input min-w-0 font-mono tabular"
+                          type="text"
+                          inputmode="decimal"
+                          placeholder="0"
+                          .value=${form.unitPrice ?? ''}
+                          aria-invalid=${errors.unitPrice ? 'true' : 'false'}
+                          aria-describedby=${errors.unitPrice ? 'tx-unit-price-error' : nothing}
+                          @input=${(event: Event) =>
+                            app.setTransactionField(
+                              'unitPrice',
+                              (event.target as HTMLInputElement).value,
+                              true,
+                            )}
+                        />
+                        ${isGold
+                          ? html`<button
+                              type="button"
+                              class="btn shrink-0"
+                              @click=${() => app.fillTradeGoldPrice()}
+                            >
+                              Pakai acuan
+                            </button>`
+                          : nothing}
+                      </div>
+                      ${fieldError('unitPrice', errors.unitPrice)}
+                    </div>
+                  </div>
+                  <div class="border border-accent/30 bg-accent/5 p-3 text-xs leading-5 text-muted" data-testid="trade-preview">
+                    Nilai transaksi:
+                    <strong class="text-ink">
+                      ${preview === null
+                        ? '—'
+                        : formatMoney(preview, amountCurrency)}
+                    </strong>
+                  </div>`
+                : html`<div>
+                    <label class="field-label" for="tx-amount">
+                      Jumlah (${amountCurrency})
+                    </label>
+                    <input
+                      id="tx-amount"
+                      class="field-input font-mono tabular"
+                      type="text"
+                      inputmode="decimal"
+                      placeholder="0"
+                      .value=${form.amount}
+                      data-autofocus
+                      aria-invalid=${errors.amount ? 'true' : 'false'}
+                      aria-describedby=${errors.amount ? 'tx-amount-error' : nothing}
+                      @input=${(event: Event) =>
+                        app.setTransactionField(
+                          'amount',
+                          (event.target as HTMLInputElement).value,
+                        )}
+                    />
+                    ${fieldError('amount', errors.amount)}
+                    <p class="field-hint">
+                      Aset baru akan otomatis muncul di dashboard.
+                    </p>
+                  </div>`}
+            </div>`
+          : html`<div class="space-y-3">
+              <div>
+                <label class="field-label" for="tx-investment">
+                  Investasi yang dijual
+                </label>
+                <select
+                  id="tx-investment"
+                  class="field-input"
+                  .value=${form.investmentId ?? ''}
+                  data-autofocus
+                  aria-invalid=${errors.investmentId ? 'true' : 'false'}
+                  aria-describedby=${errors.investmentId ? 'tx-investment-error' : nothing}
+                  @change=${(event: Event) =>
+                    app.setTransactionInvestment(
+                      (event.target as HTMLSelectElement).value,
+                    )}
+                >
+                  <option value="" ?selected=${!form.investmentId}>Pilih aset</option>
+                  ${investmentOptions(dataset.investments, form.investmentId ?? '')}
+                </select>
+                ${fieldError('investmentId', errors.investmentId)}
+                ${!selected
+                  ? html`<p class="field-hint">
+                      Pilih saham, reksa dana, emas, atau investasi lain yang
+                      sudah tercatat.
+                    </p>`
+                  : nothing}
+              </div>
+              ${selected
+                ? html`<div class="border border-line bg-raised/40 p-3 text-xs leading-5 text-muted">
+                    <strong class="text-ink">${selected.name}</strong>
+                    <span class="badge ml-2">${selected.category}</span>
+                    ${selectedQuantity !== null
+                      ? html`<span class="ml-2">
+                          Tersedia ${formatNumber(selectedQuantity, 6)}
+                          ${investmentQuantityLabel(selected.category)}
+                        </span>`
+                      : html`<span class="ml-2">
+                          Nilai ${formatMoney(selected.principal, selected.currency)}
+                        </span>`}
+                  </div>`
+                : nothing}
+              ${selected && market
+                ? html`<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <label class="field-label" for="tx-quantity">
+                        Jumlah ${quantityLabel.toLowerCase()}
+                      </label>
+                      <input
+                        id="tx-quantity"
+                        class="field-input font-mono tabular"
+                        type="text"
+                        inputmode=${isStock ? 'numeric' : 'decimal'}
+                        placeholder="0"
+                        .value=${form.quantity ?? ''}
+                        aria-invalid=${errors.quantity ? 'true' : 'false'}
+                        aria-describedby=${errors.quantity ? 'tx-quantity-error' : nothing}
+                        @input=${(event: Event) =>
+                          app.setTransactionField(
+                            'quantity',
+                            (event.target as HTMLInputElement).value,
+                            true,
+                          )}
+                      />
+                      ${fieldError('quantity', errors.quantity)}
+                    </div>
+                    <div>
+                      <label class="field-label" for="tx-unit-price">
+                        ${priceLabel}
+                      </label>
+                      <input
+                        id="tx-unit-price"
+                        class="field-input font-mono tabular"
+                        type="text"
+                        inputmode="decimal"
+                        placeholder="0"
+                        .value=${form.unitPrice ?? ''}
+                        aria-invalid=${errors.unitPrice ? 'true' : 'false'}
+                        aria-describedby=${errors.unitPrice ? 'tx-unit-price-error' : nothing}
+                        @input=${(event: Event) =>
+                          app.setTransactionField(
+                            'unitPrice',
+                            (event.target as HTMLInputElement).value,
+                            true,
+                          )}
+                      />
+                      ${fieldError('unitPrice', errors.unitPrice)}
+                    </div>
+                  </div>
+                  <div class="border border-accent/30 bg-accent/5 p-3 text-xs leading-5 text-muted" data-testid="trade-preview">
+                    Nilai penjualan:
+                    <strong class="text-ink">
+                      ${preview === null
+                        ? '—'
+                        : formatMoney(preview, amountCurrency)}
+                    </strong>
+                  </div>`
+                : selected ? html`<div>
+                    <label class="field-label" for="tx-amount">
+                      Jumlah penarikan (${amountCurrency})
+                    </label>
+                    <input
+                      id="tx-amount"
+                      class="field-input font-mono tabular"
+                      type="text"
+                      inputmode="decimal"
+                      placeholder="0"
+                      .value=${form.amount}
+                      aria-invalid=${errors.amount ? 'true' : 'false'}
+                      aria-describedby=${errors.amount ? 'tx-amount-error' : nothing}
+                      @input=${(event: Event) =>
+                        app.setTransactionField(
+                          'amount',
+                          (event.target as HTMLInputElement).value,
+                        )}
+                    />
+                    ${fieldError('amount', errors.amount)}
+                  </div>` : nothing}
+            </div>`}
+
       <div>
         <label class="field-label" for="tx-date">Tanggal</label>
         <input
@@ -853,7 +1345,7 @@ function transactionModal(app: App): TemplateResult {
               (event.target as HTMLInputElement).value,
             )}
         />
-        ${fieldError('tx-date-error', errors.date)}
+        ${fieldError('date', errors.date)}
       </div>
     </form>`,
     footer: html`${closeButton(app)}

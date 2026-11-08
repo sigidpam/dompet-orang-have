@@ -273,4 +273,200 @@ describe('repository', () => {
     expect(repo.snapshot().investments).toHaveLength(1);
     lockSession(session);
   });
+
+  it('records buy/sell trades and aggregates same-code holdings', async () => {
+    const { session, repo } = await fresh();
+    const account = await repo.addAccount({
+      name: 'Trading',
+      type: 'bank',
+      currency: 'IDR',
+      balance: '10000000',
+    });
+
+    await repo.addTrade({
+      accountId: account.id,
+      type: 'buy',
+      category: '',
+      amount: '',
+      date: '2026-11-07',
+      investmentCategory: 'Saham',
+      investmentName: 'BBCA',
+      stockCode: 'BBCA',
+      quantity: '10',
+      unitPrice: '1000',
+    });
+    expect(repo.snapshot().accounts[0]?.balance).toBe('9000000');
+    expect(repo.snapshot().investments).toHaveLength(1);
+    expect(repo.snapshot().investments[0]?.lots).toBe(10);
+
+    await repo.addTrade({
+      accountId: account.id,
+      type: 'buy',
+      category: '',
+      amount: '',
+      date: '2026-11-07',
+      investmentCategory: 'Saham',
+      investmentName: 'BBCA',
+      stockCode: 'BBCA',
+      quantity: '5',
+      unitPrice: '1200',
+    });
+    expect(repo.snapshot().accounts[0]?.balance).toBe('8400000');
+    expect(repo.snapshot().investments).toHaveLength(2);
+
+    const afterBuys = computeSummary(repo.snapshot());
+    expect(afterBuys.investmentGroups).toHaveLength(1);
+    expect(afterBuys.investmentGroups[0]?.lots).toBe(15);
+    expect(afterBuys.investmentGroups[0]?.currentValue.toString()).toBe(
+      '1800000',
+    );
+    expect(afterBuys.investmentGroups[0]?.members).toHaveLength(2);
+
+    const first = repo.snapshot().investments[0];
+    const sell = await repo.addTrade({
+      accountId: account.id,
+      type: 'sell',
+      category: '',
+      amount: '',
+      date: '2026-11-07',
+      investmentCategory: 'Saham',
+      investmentId: first?.id,
+      quantity: '5',
+      unitPrice: '1300',
+    });
+    expect(repo.snapshot().accounts[0]?.balance).toBe('9050000');
+    expect(repo.snapshot().investments[0]?.lots).toBe(5);
+    expect(repo.snapshot().investments[0]?.principal).toBe('500000');
+
+    const afterSell = computeSummary(repo.snapshot());
+    expect(afterSell.investmentGroups[0]?.lots).toBe(10);
+    expect(afterSell.investmentGroups[0]?.currentValue.toString()).toBe(
+      '1300000',
+    );
+    expect(afterSell.investmentGroups[0]?.cost.toString()).toBe('1100000');
+    await expect(repo.deleteTransaction(sell.id)).rejects.toBeInstanceOf(
+      ValidationError,
+    );
+    await expect(repo.deleteInvestment(first?.id ?? '')).rejects.toBeInstanceOf(
+      ValidationError,
+    );
+    lockSession(session);
+  });
+
+  it('supports fixed-income withdrawals and groups same-name accounts', async () => {
+    const { session, repo } = await fresh();
+    const first = await repo.addAccount({
+      name: 'Superbank',
+      type: 'bank',
+      currency: 'IDR',
+      balance: '5000000',
+    });
+    await repo.addAccount({
+      name: 'Superbank',
+      type: 'bank',
+      currency: 'IDR',
+      balance: '2500000',
+    });
+    const grouped = computeSummary(repo.snapshot());
+    expect(grouped.accountGroups).toHaveLength(1);
+    expect(grouped.accountGroups[0]?.balance.toString()).toBe('7500000');
+
+    await repo.addTrade({
+      accountId: first.id,
+      type: 'buy',
+      category: '',
+      amount: '1000000',
+      date: '2026-11-07',
+      investmentCategory: 'Deposito',
+      investmentName: 'Deposito BCA',
+    });
+    expect(repo.snapshot().accounts[0]?.balance).toBe('4000000');
+    const deposit = repo.snapshot().investments[0];
+    expect(deposit?.principal).toBe('1000000');
+
+    await repo.addTrade({
+      accountId: first.id,
+      type: 'sell',
+      category: '',
+      amount: '400000',
+      date: '2026-11-07',
+      investmentCategory: 'Deposito',
+      investmentId: deposit?.id,
+    });
+    expect(repo.snapshot().accounts[0]?.balance).toBe('4400000');
+    expect(repo.snapshot().investments[0]?.principal).toBe('600000');
+    const summary = computeSummary(repo.snapshot());
+    expect(summary.investmentGroups[0]?.currentValue.toString()).toBe('600000');
+    expect(summary.totalIncomeIdr.toString()).toBe('0');
+    expect(summary.totalExpenseIdr.toString()).toBe('0');
+    lockSession(session);
+  });
+
+
+
+  it('creates Reksa Dana and Emas holdings from buy/sell trades', async () => {
+    const { session, repo } = await fresh();
+    const account = await repo.addAccount({
+      name: 'Trading',
+      type: 'bank',
+      currency: 'IDR',
+      balance: '10000000',
+    });
+
+    await repo.addTrade({
+      accountId: account.id,
+      type: 'buy',
+      category: '',
+      amount: '',
+      date: '2026-11-07',
+      investmentCategory: 'Reksa Dana',
+      investmentName: 'RD Pasar Uang',
+      quantity: '1000',
+      unitPrice: '1200',
+    });
+    await repo.addTrade({
+      accountId: account.id,
+      type: 'buy',
+      category: '',
+      amount: '',
+      date: '2026-11-07',
+      investmentCategory: 'Emas',
+      investmentName: 'Emas ANTAM',
+      quantity: '10',
+      unitPrice: '100000',
+    });
+    expect(repo.snapshot().accounts[0]?.balance).toBe('7800000');
+    const summary = computeSummary(repo.snapshot(), {
+      goldPricePerGramIdr: '150000',
+    });
+    const fund = summary.investmentGroups.find(
+      (group) => group.category === 'Reksa Dana',
+    );
+    const gold = summary.investmentGroups.find(
+      (group) => group.category === 'Emas',
+    );
+    expect(fund?.units.toString()).toBe('1000');
+    expect(fund?.currentValue.toString()).toBe('1200000');
+    expect(gold?.grams.toString()).toBe('10');
+    expect(gold?.currentValue.toString()).toBe('1500000');
+
+    const fundRecord = repo.snapshot().investments[0];
+    await repo.addTrade({
+      accountId: account.id,
+      type: 'sell',
+      category: '',
+      amount: '',
+      date: '2026-11-07',
+      investmentCategory: 'Reksa Dana',
+      investmentId: fundRecord?.id,
+      quantity: '500',
+      unitPrice: '1300',
+    });
+    expect(repo.snapshot().accounts[0]?.balance).toBe('8450000');
+    expect(repo.snapshot().investments[0]?.units).toBe('500');
+    expect(repo.snapshot().investments[0]?.principal).toBe('600000');
+    lockSession(session);
+  });
+
+
 });

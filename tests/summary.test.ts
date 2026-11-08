@@ -313,4 +313,202 @@ describe('summary calculations', () => {
     expect(summary.investments[0]?.currentValue.toString()).toBe('500');
     expect(summary.investments[0]?.valueSource).toBe('cost');
   });
+
+  it('groups same-name accounts and market holdings but not fixed tranches', () => {
+    const dataset = emptyDataset();
+    dataset.accounts = [
+      {
+        id: 'a1',
+        name: 'Superbank',
+        type: 'bank',
+        currency: 'IDR',
+        balance: '1000',
+        createdAt: '2026-11-07T00:00:00.000Z',
+      },
+      {
+        id: 'a2',
+        name: 'Superbank',
+        type: 'bank',
+        currency: 'IDR',
+        balance: '2000',
+        createdAt: '2026-11-07T00:00:00.000Z',
+      },
+      {
+        id: 'a3',
+        name: 'Superbank',
+        type: 'cash',
+        currency: 'IDR',
+        balance: '500',
+        createdAt: '2026-11-07T00:00:00.000Z',
+      },
+    ];
+    const base = {
+      cashback: '0',
+      annualInterestRate: '0',
+      tenorMonths: 0,
+      currency: 'IDR',
+      createdAt: '2026-11-07T00:00:00.000Z',
+    };
+    dataset.investments = [
+      {
+        ...base,
+        id: 's1',
+        name: 'BBCA',
+        category: 'Saham',
+        principal: '1000000',
+        lots: 10,
+        stockCode: 'BBCA',
+        stockCurrentPrice: '1000',
+      },
+      {
+        ...base,
+        id: 's2',
+        name: 'BBCA',
+        category: 'Saham',
+        principal: '500000',
+        lots: 5,
+        stockCode: 'BBCA',
+        stockCurrentPrice: '1000',
+      },
+      {
+        ...base,
+        id: 'f1',
+        name: 'RD Pasar Uang',
+        category: 'Reksa Dana',
+        principal: '1000000',
+        lots: 0,
+        units: '1000',
+        nab: '1200',
+      },
+      {
+        ...base,
+        id: 'd1',
+        name: 'Deposito BCA',
+        category: 'Deposito',
+        principal: '1000000',
+        lots: 0,
+      },
+      {
+        ...base,
+        id: 'd2',
+        name: 'Deposito BCA',
+        category: 'Deposito',
+        principal: '2000000',
+        lots: 0,
+      },
+    ];
+    dataset.transactions = [
+      {
+        id: 'trade',
+        accountId: 'a1',
+        type: 'buy',
+        category: 'Saham',
+        amount: '1000000',
+        currency: 'IDR',
+        date: '2026-11-07',
+        createdAt: '2026-11-07T00:00:00.000Z',
+        investmentId: 's1',
+        investmentLabel: 'BBCA',
+        investmentCategory: 'Saham',
+        quantity: '10',
+        unitPrice: '1000',
+      },
+    ];
+
+    const summary = computeSummary(dataset, {
+      now: new Date('2026-11-07T00:00:00.000Z'),
+    });
+    expect(summary.accountGroups).toHaveLength(2);
+    const bank = summary.accountGroups.find((group) => group.type === 'bank');
+    expect(bank?.balance.toString()).toBe('3000');
+    expect(bank?.members).toHaveLength(2);
+    const cash = summary.accountGroups.find((group) => group.type === 'cash');
+    expect(cash?.balance.toString()).toBe('500');
+
+    expect(summary.investmentGroups).toHaveLength(4);
+    const bbca = summary.investmentGroups.find(
+      (group) => group.category === 'Saham',
+    );
+    expect(bbca?.name).toBe('BBCA');
+    expect(bbca?.lots).toBe(15);
+    expect(bbca?.currentValue.toString()).toBe('1500000');
+    expect(bbca?.cost.toString()).toBe('1500000');
+    expect(bbca?.members).toHaveLength(2);
+
+    const fund = summary.investmentGroups.find(
+      (group) => group.category === 'Reksa Dana',
+    );
+    expect(fund?.units.toString()).toBe('1000');
+    expect(fund?.currentValue.toString()).toBe('1200000');
+
+    expect(
+      summary.investmentGroups.filter(
+        (group) => group.category === 'Deposito',
+      ),
+    ).toHaveLength(2);
+    expect(summary.portfolioCurrentIdr.toString()).toBe('5700000');
+    expect(summary.portfolioCostIdr.toString()).toBe('5500000');
+    expect(summary.totalIncomeIdr.toString()).toBe('0');
+    expect(summary.totalExpenseIdr.toString()).toBe('0');
+    expect(
+      summary.monthlyCashflow.every(
+        (month) => month.incomeIdr.isZero() && month.expenseIdr.isZero(),
+      ),
+    ).toBe(true);
+  });
+
+
+
+  it('keeps NIB-only funds visible while hiding zero-quantity market holdings', () => {
+    const dataset = emptyDataset();
+    const base = {
+      cashback: '0',
+      annualInterestRate: '0',
+      tenorMonths: 0,
+      currency: 'IDR',
+      createdAt: '2026-11-07T00:00:00.000Z',
+    };
+    dataset.investments = [
+      {
+        ...base,
+        id: 'fund-nib',
+        name: 'RD NIB',
+        category: 'Reksa Dana',
+        principal: '1000000',
+        lots: 0,
+        nib: '1100000',
+      },
+      {
+        ...base,
+        id: 'stock-empty',
+        name: 'BBCA',
+        category: 'Saham',
+        principal: '1000000',
+        lots: 0,
+        stockCode: 'BBCA',
+        stockCurrentPrice: '1500',
+      },
+      {
+        ...base,
+        id: 'gold-empty',
+        name: 'Emas',
+        category: 'Emas',
+        principal: '1000000',
+        lots: 0,
+        goldGrams: '0',
+        goldBuyPricePerGram: '100000',
+      },
+    ];
+    const summary = computeSummary(dataset, {
+      goldPricePerGramIdr: '150000',
+    });
+    expect(summary.investmentGroups).toHaveLength(1);
+    expect(summary.investmentGroups[0]?.category).toBe('Reksa Dana');
+    expect(summary.investmentGroups[0]?.currentValue.toString()).toBe(
+      '1100000',
+    );
+    expect(summary.portfolioCurrentIdr.toString()).toBe('1100000');
+  });
+
+
 });
