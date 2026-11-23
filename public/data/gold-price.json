@@ -2,10 +2,10 @@
   "source": "gold-api.com XAU/USD + Frankfurter USD/IDR",
   "sourceType": "spot",
   "currency": "IDR",
-  "pricePerGram": "2077991.39",
-  "usdPerOunce": "3539.000000",
+  "pricePerGram": "2120179.55",
+  "usdPerOunce": "3610.850098",
   "usdToIdr": "18263",
   "marketDate": "2026-11-20",
-  "updatedAt": "2026-11-22T07:58:09.000Z",
-  "fetchedAt": "2026-11-22T07:58:17.533Z"
+  "updatedAt": "2026-11-23T08:58:41.000Z",
+  "fetchedAt": "2026-11-23T08:58:47.410Z"
 }
